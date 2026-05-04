@@ -1,6 +1,9 @@
 {
     "require": {
         "slim/slim": "4.*",
-        "slim/psr7": "^1.8"
+        "slim/psr7": "^1.8",
+        "phpoffice/phpspreadsheet": "^1.28",
+        "dompdf/dompdf": "^1.2",
+        "setasign/fpdf": "^1.8"
     }
 }

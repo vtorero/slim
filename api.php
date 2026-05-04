@@ -1543,10 +1543,17 @@ $app->post('/actualiza-monto', function (Request $request, Response $response) u
     try {
 
         // Obtener monto pendiente actual
+<<<<<<< HEAD
         $stmt = $pdo->prepare("SELECT monto_pendiente
                              FROM venta_pagos
                              WHERE id_venta = :id_venta
                              ORDER BY id DESC
+=======
+        $stmt = $pdo->prepare("SELECT monto_pendiente 
+                             FROM venta_pagos 
+                             WHERE id_venta = :id_venta 
+                             ORDER BY id DESC 
+>>>>>>> 004f6d84d0cb8ae60075fc98a0329cdc143f528c
                              LIMIT 1");
         $stmt->execute(['id_venta' => $data->id_venta]);
         $prods = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -1562,7 +1569,11 @@ $app->post('/actualiza-monto', function (Request $request, Response $response) u
             $nuevoMonto = $montoPendiente - $data->monto;
 
             // Insertar pago
+<<<<<<< HEAD
             $stmtInsert = $pdo->prepare("INSERT INTO venta_pagos
+=======
+            $stmtInsert = $pdo->prepare("INSERT INTO venta_pagos 
+>>>>>>> 004f6d84d0cb8ae60075fc98a0329cdc143f528c
                 (id_venta, tipoPago, numero_operacion, cuentaPago, monto, monto_pendiente, estado, usuario)
                 VALUES (:id_venta, :tipo_pago, :numero, :cuenta_pago, :monto, :monto_pendiente, 1, :usuario)");
 
@@ -1577,8 +1588,13 @@ $app->post('/actualiza-monto', function (Request $request, Response $response) u
             ]);
 
             // Actualizar venta
+<<<<<<< HEAD
             $stmtUpdate = $pdo->prepare("UPDATE ventas
                                        SET monto_pendiente = :monto
+=======
+            $stmtUpdate = $pdo->prepare("UPDATE ventas 
+                                       SET monto_pendiente = :monto 
+>>>>>>> 004f6d84d0cb8ae60075fc98a0329cdc143f528c
                                        WHERE id = :id_venta");
 
             $stmtUpdate->execute([
@@ -1588,8 +1604,13 @@ $app->post('/actualiza-monto', function (Request $request, Response $response) u
 
             // Validar si quedó en 0
             if ($nuevoMonto == 0) {
+<<<<<<< HEAD
                 $stmtZero = $pdo->prepare("UPDATE venta_pagos
                                          SET monto_pendiente = 0
+=======
+                $stmtZero = $pdo->prepare("UPDATE venta_pagos 
+                                         SET monto_pendiente = 0 
+>>>>>>> 004f6d84d0cb8ae60075fc98a0329cdc143f528c
                                          WHERE id_venta = :id_venta");
 
                 $stmtZero->execute([
@@ -1638,9 +1659,15 @@ $app->get('/buscarclientes/{criterio}', function (Request $request, Response $re
     try {
 
         $stmt = $pdo->prepare("
+<<<<<<< HEAD
             SELECT *
             FROM aprendea_erp.clientes
             WHERE nombre LIKE :criterio
+=======
+            SELECT * 
+            FROM aprendea_erp.clientes 
+            WHERE nombre LIKE :criterio 
+>>>>>>> 004f6d84d0cb8ae60075fc98a0329cdc143f528c
                OR num_documento LIKE :criterio
         ");
 
@@ -1677,9 +1704,15 @@ $app->get('/buscarproveedor/{criterio}', function (Request $request, Response $r
     try {
 
         $stmt = $pdo->prepare("
+<<<<<<< HEAD
             SELECT *
             FROM aprendea_erp.proveedores
             WHERE razon_social LIKE :criterio
+=======
+            SELECT * 
+            FROM aprendea_erp.proveedores 
+            WHERE razon_social LIKE :criterio 
+>>>>>>> 004f6d84d0cb8ae60075fc98a0329cdc143f528c
                OR num_documento LIKE :criterio
         ");
 
@@ -1718,8 +1751,13 @@ $app->post('/actualiza-pendiente-venta', function (Request $request, Response $r
 
         // Obtener detalle de venta
         $stmt = $pdo->prepare("
+<<<<<<< HEAD
             SELECT d.*
             FROM aprendea_erp.venta_detalle d
+=======
+            SELECT d.* 
+            FROM aprendea_erp.venta_detalle d 
+>>>>>>> 004f6d84d0cb8ae60075fc98a0329cdc143f528c
             WHERE id = :id AND id_venta = :id_venta
         ");
 
@@ -1768,7 +1806,11 @@ $app->post('/actualiza-pendiente-venta', function (Request $request, Response $r
 
         // Actualizar pendiente
         $stmtUpdate = $pdo->prepare("
+<<<<<<< HEAD
             UPDATE venta_detalle
+=======
+            UPDATE venta_detalle 
+>>>>>>> 004f6d84d0cb8ae60075fc98a0329cdc143f528c
             SET pendiente = :pendiente, usuario = :usuario
             WHERE id_venta = :id_venta AND id_producto = :id_producto
         ");
@@ -1782,10 +1824,17 @@ $app->post('/actualiza-pendiente-venta', function (Request $request, Response $r
 
         // Actualizar inventario
         $stmtInv = $pdo->prepare("
+<<<<<<< HEAD
             UPDATE inventario
             SET cantidad = cantidad - :cantidad,
                 fecha_actualizacion = NOW()
             WHERE producto_id = :id_producto
+=======
+            UPDATE inventario 
+            SET cantidad = cantidad - :cantidad,
+                fecha_actualizacion = NOW()
+            WHERE producto_id = :id_producto 
+>>>>>>> 004f6d84d0cb8ae60075fc98a0329cdc143f528c
               AND id_almacen = :sucursal
         ");
 
@@ -1826,8 +1875,13 @@ $app->get('/subcategoria_categoria/{criterio}', function (Request $request, Resp
     try {
 
         $stmt = $pdo->prepare("
+<<<<<<< HEAD
             SELECT nombre, id
             FROM sub_categorias
+=======
+            SELECT nombre, id 
+            FROM sub_categorias 
+>>>>>>> 004f6d84d0cb8ae60075fc98a0329cdc143f528c
             WHERE id_categoria = :criterio
             ORDER BY nombre ASC
         ");
@@ -1862,8 +1916,13 @@ $app->get('/familia_subcategoria/{criterio}', function (Request $request, Respon
     try {
 
         $stmt = $pdo->prepare("
+<<<<<<< HEAD
             SELECT id, nombre
             FROM sub_sub_categorias
+=======
+            SELECT id, nombre 
+            FROM sub_sub_categorias 
+>>>>>>> 004f6d84d0cb8ae60075fc98a0329cdc143f528c
             WHERE id_subcategoria = :criterio
             ORDER BY nombre ASC
         ");
@@ -1930,8 +1989,13 @@ $app->get('/sub_categorias', function (Request $request, Response $response) use
     try {
 
         $stmt = $pdo->prepare("
+<<<<<<< HEAD
             SELECT id, nombre
             FROM sub_categorias
+=======
+            SELECT id, nombre 
+            FROM sub_categorias 
+>>>>>>> 004f6d84d0cb8ae60075fc98a0329cdc143f528c
             ORDER BY id ASC
         ");
 
@@ -1961,8 +2025,13 @@ $app->get('/familia', function (Request $request, Response $response) use ($pdo)
     try {
 
         $stmt = $pdo->prepare("
+<<<<<<< HEAD
             SELECT id, nombre
             FROM sub_sub_categorias
+=======
+            SELECT id, nombre 
+            FROM sub_sub_categorias 
+>>>>>>> 004f6d84d0cb8ae60075fc98a0329cdc143f528c
             ORDER BY id ASC
         ");
 
@@ -1990,8 +2059,13 @@ $app->get('/unidad', function (Request $request, Response $response) use ($pdo) 
     try {
 
         $stmt = $pdo->prepare("
+<<<<<<< HEAD
             SELECT id, codigo, nombre
             FROM unidad
+=======
+            SELECT id, codigo, nombre 
+            FROM unidad 
+>>>>>>> 004f6d84d0cb8ae60075fc98a0329cdc143f528c
             ORDER BY nombre ASC
         ");
 
@@ -2041,9 +2115,15 @@ $app->post('/producto', function (Request $request, Response $response) use ($pd
 
         // ---- Insert producto ----
         $stmt = $pdo->prepare("
+<<<<<<< HEAD
             INSERT INTO productos
             (id_categoria, id_subcategoria, id_sub_sub_categoria, codigo, codigobarras, nombre, unidad, precio, imagen)
             VALUES
+=======
+            INSERT INTO productos 
+            (id_categoria, id_subcategoria, id_sub_sub_categoria, codigo, codigobarras, nombre, unidad, precio, imagen)
+            VALUES 
+>>>>>>> 004f6d84d0cb8ae60075fc98a0329cdc143f528c
             (:categoria, :subcategoria, :familia, :codigo, :codigobarras, :nombre, :unidad, :precio, :imagen)
         ");
 
@@ -2073,7 +2153,11 @@ $app->post('/producto', function (Request $request, Response $response) use ($pd
 
         // ---- Movimientos iniciales ----
         $stmtMov = $pdo->prepare("
+<<<<<<< HEAD
             INSERT INTO movimiento_articulos
+=======
+            INSERT INTO movimiento_articulos 
+>>>>>>> 004f6d84d0cb8ae60075fc98a0329cdc143f528c
             (codigo_prod, tipo_movimiento, cantidad_ingreso, cantidad_salida, cantidad_acumulada, precio, comentario, id_sucursal, usuario)
             VALUES (:producto_id, 'Ingreso', 0, 0, 0, 0, 'carga inicial', :sucursal, :usuario)
         ");
@@ -2105,6 +2189,7 @@ $app->post('/producto', function (Request $request, Response $response) use ($pd
     return $response->withHeader('Content-Type', 'application/json');
 });
 
+<<<<<<< HEAD
 $app->post('/cliente', function (Request $request, Response $response) use ($pdo) {
 
     $body = $request->getBody()->getContents();
@@ -2158,4 +2243,6 @@ $app->post('/cliente', function (Request $request, Response $response) use ($pdo
     return $response->withHeader('Content-Type', 'application/json');
 });
 
+=======
+>>>>>>> 004f6d84d0cb8ae60075fc98a0329cdc143f528c
 $app->run();

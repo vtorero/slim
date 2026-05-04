@@ -12,6 +12,9 @@ if($method == "OPTIONS") {
 require (__DIR__ .'/vendor/autoload.php');
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
+use PhpOffice\PhpSpreadsheet\Cell\DataType;
 use Slim\Factory\AppFactory;
 
 $app = AppFactory::create();
@@ -174,47 +177,550 @@ and v.id=vp.id_compra and v.id_proveedor=cl.id and vp.usuario=u.id and vp.fecha_
 });
 
 
-$app->post('/login', function (Request $request, Response $response) use ($pdo) {
+$app->post('/enviarboletas', function (Request $request, Response $response) use ($pdo) {
 
-    $data = json_decode($request->getBody()->getContents(), true);
+    $body = $request->getBody()->getContents();
+    $dat = json_decode($body, true);
 
-    $sql = "SELECT u.*, s.id id_sucursal, s.nombre sucursal, s.direccion, s.telefono
-            FROM usuarios u
-            INNER JOIN permisos p ON u.id = p.id_usuario
-            INNER JOIN sucursales s ON p.id_sucursal = s.id
-            WHERE p.estado = 1
-            AND u.nombre = :usuario
-            AND u.contrasena = :password limit 1";
+    if (!isset($dat['ids']) || !is_array($dat['ids'])) {
+        $response->getBody()->write("IDs inválidos");
+        return $response->withStatus(400);
+    }
+
+    // 🔒 Sanitizar IDs
+    $ids = array_map('intval', $dat['ids']);
+    $placeholders = implode(',', array_fill(0, count($ids), '?'));
+
+
+    $sqlUpdate = "UPDATE ventas v
+JOIN clientes c ON v.id_cliente = c.id
+SET v.tipoDoc = CASE
+    WHEN c.num_documento = '00000000000' OR LENGTH(c.num_documento) < 11 THEN 'Boleta'
+    ELSE 'Factura'
+END
+WHERE v.id IN ($placeholders)";
+
+$stmtUpdate = $pdo->prepare($sqlUpdate);
+$stmtUpdate->execute($ids);
+
+
+    $sql = "SELECT v.id, c.num_documento,
+         v.id AS Procura,
+        ROW_NUMBER() OVER(PARTITION BY v.id ORDER BY d.id) AS Item,
+        p.nombre AS Producto, d.cantidad AS Cantidad,
+        d.precio AS precio_unitario,
+        p.codigo AS codigo_producto,
+        p.unidad AS codigo_unidad,
+        CASE
+            WHEN c.num_documento = '00000000000' OR LENGTH(c.num_documento) < 11 THEN 'Boleta'
+            ELSE 'Factura'
+        END AS tipo_documento
+    FROM ventas v
+    JOIN venta_detalle d ON v.id = d.id_venta
+    JOIN productos p ON d.id_producto = p.id
+    JOIN clientes c ON v.id_cliente = c.id
+    WHERE v.id IN ($placeholders)
+    ORDER BY v.id, Item";
 
     $stmt = $pdo->prepare($sql);
-    $stmt->execute([
-        ':usuario' => $data['usuario'],
-        ':password' => $data['password']
-    ]);
+    $stmt->execute($ids);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    $usuario = $stmt->fetchAll();
+    // 📊 Crear Excel
+    $spreadsheet = new Spreadsheet();
+    $sheet = $spreadsheet->getActiveSheet();
 
-    $resp = (count($usuario) > 0)
-        ? ["status" => true, "rows" => count($usuario), "data" => $usuario]
-        : ["status" => false, "rows" => 0, "data" => null];
+    // 🧾 Cabeceras
+    $headers = [
+        'RUC CLIENTE',
+        'Procura',
+        'Item',
+        'Producto',
+        'Cantidad',
+        'PRECIO UNITARIO',
+        'CODIGO PRODUCTO',
+        'CODIGO UNIAD',
+        'TIPO DOCUMENTO'
+    ];
 
-    $response->getBody()->write(json_encode($resp));
+    $sheet->fromArray($headers, null, 'A1');
 
-    return $response->withHeader('Content-Type', 'application/json');
+    // 🧾 Datos
+    $rowIndex = 2;
+
+    foreach ($rows as $row) {
+        if($row['tipo_documento']=='Boleta'){
+        $doc = str_pad($row['num_documento'], 8, "0", STR_PAD_LEFT);
+        }
+        else{
+        $doc = str_pad($row['num_documento'], 11, "0", STR_PAD_LEFT);
+        }
+
+        $sheet->setCellValueExplicit("A{$rowIndex}", $doc, \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
+        $sheet->setCellValue("B{$rowIndex}", $row['Procura']);
+        $sheet->setCellValue("C{$rowIndex}", $row['Item']);
+        $sheet->setCellValue("D{$rowIndex}", limpiarCadena($row['Producto']));
+        $sheet->setCellValue("E{$rowIndex}", $row['Cantidad']);
+        $sheet->setCellValue("F{$rowIndex}", $row['precio_unitario']);
+        $sheet->setCellValue("G{$rowIndex}", $row['codigo_producto']);
+        $sheet->setCellValue("H{$rowIndex}", $row['codigo_unidad']);
+        $sheet->setCellValue("I{$rowIndex}", $row['tipo_documento']);
+
+        $rowIndex++;
+    }
+
+    // 🎨 (Opcional) Auto tamaño columnas
+    foreach (range('A','I') as $col) {
+        $sheet->getColumnDimension($col)->setAutoSize(true);
+    }
+
+    // 📁 Crear archivo temporal
+    $fileName = "boletas_" . date('Y-m-d') . ".xlsx";
+    $tempFile = sys_get_temp_dir() . DIRECTORY_SEPARATOR . $fileName;
+
+    $writer = new Xlsx($spreadsheet);
+    $writer->save($tempFile);
+
+    // 📤 Enviar al navegador
+    $stream = new \Slim\Psr7\Stream(fopen($tempFile, 'rb'));
+
+    return $response
+        ->withBody($stream)
+        ->withHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        ->withHeader('Content-Disposition', "attachment; filename=\"$fileName\"")
+        ->withHeader('Cache-Control', 'max-age=0');
+});
+
+
+function limpiarCadena($cadena) {
+    // Eliminar acentos y caracteres especiales
+    $acentos = array(
+        'á' => 'a', 'é' => 'e', 'í' => 'i', 'ó' => 'o', 'ú' => 'u', 'ñ' => 'n',
+        'Á' => 'A', 'É' => 'E', 'Í' => 'I', 'Ó' => 'O', 'Ú' => 'U', 'Ñ' => 'N',
+        'ä' => 'a', 'ë' => 'e', 'ï' => 'i', 'ö' => 'o', 'ü' => 'u', 'ÿ' => 'y',
+        'Ä' => 'A', 'Ë' => 'E', 'Ï' => 'I', 'Ö' => 'O', 'Ü' => 'U', 'Ÿ' => 'Y',
+        // Agregar otros caracteres especiales que desees reemplazar
+    );
+
+    // Reemplazar los caracteres acentuados
+    $cadena = strtr($cadena, $acentos);
+
+    // Eliminar caracteres no alfanuméricos (excepto espacios)
+    $cadena = preg_replace("[^a-zA-Z0-9\s]", "", $cadena);
+
+    return $cadena;
+}
+
+
+
+
+$app->post('/exportar', function (Request $request, Response $response) use ($pdo) {
+
+    $dat = json_decode($request->getBody()->getContents(), true);
+
+    // ---- Formateo de fechas ----
+    $arraymeses = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    $arraynros  = ['01','02','03','04','05','06','07','08','09','10','11','12'];
+
+    $mes1 = substr($dat['ini'], 3, 3);
+    $mes2 = substr($dat['fin'], 3, 3);
+    $dia1 = substr($dat['ini'], 0, 2);
+    $dia2 = substr($dat['fin'], 0, 2);
+    $ano1 = substr($dat['ini'], 7, 4);
+    $ano2 = substr($dat['fin'], 7, 4);
+
+    $ini = $ano1 . '-' . str_replace($arraymeses, $arraynros, $mes1) . '-' . $dia1 . " 00:00:00";
+    $fin = $ano2 . '-' . str_replace($arraymeses, $arraynros, $mes2) . '-' . $dia2 . " 23:59:00";
+
+    try {
+
+        // ---- Consulta ----
+        $sql = "SELECT v.id,
+                       cl.num_documento,
+                       cl.nombre,
+                       p.codigo,
+                       p.nombre AS producto,
+                       c.nombre categoria,
+                       sc.nombre subcategoria,
+                       fa.nombre familia,
+                       vd.cantidad,
+                       p.unidad,
+                       vd.precio,
+                       (vd.cantidad * vd.precio) AS valor_total,
+                       'Venta' AS movimiento,
+                       u.nombre AS usuario,
+                       s.nombre AS sucursal,
+                       v.fecha_registro,
+                       v.observacion
+                FROM venta_detalle vd
+                INNER JOIN ventas v ON v.id = vd.id_venta
+                INNER JOIN usuarios u ON v.id_usuario = u.id
+                INNER JOIN sucursales s ON v.id_sucursal = s.id
+                INNER JOIN clientes cl ON v.id_cliente = cl.id
+                INNER JOIN productos p ON vd.id_producto = p.id
+                JOIN categorias c ON p.id_categoria = c.id
+                JOIN sub_categorias sc ON p.id_subcategoria = sc.id
+                JOIN sub_sub_categorias fa ON p.id_sub_sub_categoria = fa.id
+                WHERE v.estado = 1
+                AND v.fecha_registro BETWEEN :ini AND :fin
+
+                UNION ALL
+
+                SELECT v.id,
+                       cl.num_documento,
+                       cl.nombre,
+                       p.codigo,
+                       p.nombre,
+                       c.nombre,
+                       sc.nombre,
+                       fa.nombre,
+                       vp.cantidad,
+                       p.unidad,
+                       vp.precio,
+                       (vp.cantidad * vp.precio),
+                       'Compra',
+                       u.nombre,
+                       s.nombre,
+                       vp.fecha_registro,
+                       v.observacion
+                FROM compra_detalle vp
+                INNER JOIN compras v ON v.id = vp.id_compra
+                INNER JOIN usuarios u ON v.id_usuario = u.id
+                INNER JOIN sucursales s ON v.id_sucursal = s.id
+                LEFT JOIN clientes cl ON v.id_proveedor = cl.id
+                INNER JOIN productos p ON vp.id_producto = p.id
+                JOIN categorias c ON p.id_categoria = c.id
+                JOIN sub_categorias sc ON p.id_subcategoria = sc.id
+                JOIN sub_sub_categorias fa ON p.id_sub_sub_categoria = fa.id
+                WHERE vp.fecha_registro BETWEEN :ini AND :fin
+
+                ORDER BY fecha_registro DESC";
+
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute([
+            'ini' => $ini,
+            'fin' => $fin
+        ]);
+
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        // ---- Crear Excel ----
+        $spreadsheet = new Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+
+        // Encabezados
+        $headers = ['ID','Fecha','Documento','Razon Social','Codigo','Producto','Categoria','Subcategoria','Familia','Cantidad','Unidad','Precio','Total','Movimiento','Usuario','Sucursal','Observacion'];
+
+        $col = 'A';
+        foreach ($headers as $header) {
+            $sheet->setCellValue($col . '1', $header);
+            $col++;
+        }
+
+        // Datos
+        $rowIndex = 2;
+
+        foreach ($rows as $row) {
+
+            $doc = preg_replace('/\D/', '', $row['num_documento']);
+
+            // 🔥 Ajuste según tipo (si luego agregas tipo_documento)
+            if (strlen($doc) <= 8) {
+                $doc = str_pad($doc, 8, "0", STR_PAD_LEFT);
+            } else {
+                $doc = str_pad($doc, 11, "0", STR_PAD_LEFT);
+            }
+
+           
+            $sheet->setCellValueExplicit("A{$rowIndex}", $row['id'], DataType::TYPE_NUMERIC);
+            $sheet->setCellValue("B{$rowIndex}", $row['fecha_registro']);
+            $sheet->setCellValueExplicit("C{$rowIndex}", $doc, \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
+            $sheet->setCellValue("D{$rowIndex}", $row['nombre']);
+            $sheet->setCellValue("E{$rowIndex}", $row['codigo']);
+            $sheet->setCellValue("F{$rowIndex}", $row['producto']);
+            $sheet->setCellValue("G{$rowIndex}", $row['categoria']);
+            $sheet->setCellValue("H{$rowIndex}", $row['subcategoria']);
+            $sheet->setCellValue("I{$rowIndex}", $row['familia']);
+            $sheet->setCellValue("J{$rowIndex}", $row['cantidad']);
+            $sheet->setCellValue("K{$rowIndex}", $row['unidad']);
+            $sheet->setCellValue("L{$rowIndex}", $row['precio']);
+            $sheet->setCellValue("M{$rowIndex}", $row['valor_total']);
+            $sheet->setCellValue("N{$rowIndex}", $row['movimiento']);
+            $sheet->setCellValue("O{$rowIndex}", $row['usuario']);
+            $sheet->setCellValue("P{$rowIndex}", $row['sucursal']);
+            $sheet->setCellValue("Q{$rowIndex}", $row['observacion']);
+
+            $rowIndex++;
+        }
+
+        // ---- Output ----
+        $writer = new Xlsx($spreadsheet);
+
+        ob_start();
+        $writer->save('php://output');
+        $excelOutput = ob_get_clean();
+
+        $response->getBody()->write($excelOutput);
+
+        return $response
+            ->withHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+            ->withHeader('Content-Disposition', 'attachment; filename="reporte.xlsx"');
+
+    } catch (Exception $e) {
+
+        $response->getBody()->write(json_encode([
+            "STATUS" => false,
+            "message" => $e->getMessage()
+        ]));
+
+        return $response->withHeader('Content-Type', 'application/json');
+    }
+});
+
+
+
+$app->post('/exportarcaja', function (Request $request, Response $response) use ($pdo) {
+
+    $dat = json_decode($request->getBody()->getContents(), true);
+
+    // ---- Fechas ----
+    $arraymeses = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    $arraynros  = ['01','02','03','04','05','06','07','08','09','10','11','12'];
+
+    $mes1 = substr($dat['ini'], 3, 3);
+    $mes2 = substr($dat['fin'], 3, 3);
+    $dia1 = substr($dat['ini'], 0, 2);
+    $dia2 = substr($dat['fin'], 0, 2);
+    $ano1 = substr($dat['ini'], 7, 4);
+    $ano2 = substr($dat['fin'], 7, 4);
+
+    $ini = $ano1 . '-' . str_replace($arraymeses, $arraynros, $mes1) . '-' . $dia1 . " 00:00:01";
+    $fin = $ano2 . '-' . str_replace($arraymeses, $arraynros, $mes2) . '-' . $dia2 . " 23:59:59";
+
+    try {
+
+        // ---- SQL seguro ----
+        $sql = "SELECT
+                    vp.id_venta as id,
+                    vp.fecha_registro,
+                    v.fecha,
+                    cl.num_documento AS documento,
+                    cl.nombre AS cliente,
+                    'VENTA' AS movimiento,
+                    u.nombre AS usuario,
+                    s.nombre AS sucursal,
+                    tp.nombre AS tipopago,
+                    c.nombre AS cuenta,
+                    vp.numero_operacion,
+                    vp.monto,
+                    vp.monto_pendiente,
+                    v.observacion
+                FROM venta_pagos vp
+                JOIN ventas v ON v.id = vp.id_venta AND v.estado=1
+                JOIN clientes cl ON cl.id = v.id_cliente
+                JOIN sucursales s ON s.id = v.id_sucursal
+                JOIN usuarios u ON u.id = vp.usuario
+                JOIN tipoPago tp ON tp.id = vp.tipoPago
+                JOIN cajas c ON c.id = vp.cuentaPago
+                WHERE vp.fecha_registro BETWEEN :ini AND :fin
+
+                UNION ALL
+
+                SELECT
+                    vp.id_compra,
+                    vp.fecha_registro,
+                    v.fecha,
+                    cl.num_documento,
+                    cl.razon_social,
+                    'COMPRA',
+                    u.nombre,
+                    s.nombre,
+                    tp.nombre,
+                    c.nombre,
+                    vp.numero_operacion,
+                    vp.monto,
+                    vp.monto_pendiente,
+                    v.observacion
+                FROM compra_pagos vp
+                JOIN compras v ON v.id = vp.id_compra AND v.estado=1
+                JOIN proveedores cl ON cl.id = v.id_proveedor
+                JOIN sucursales s ON s.id = v.id_sucursal
+                JOIN usuarios u ON u.id = vp.usuario
+                JOIN tipoPago tp ON tp.id = vp.tipoPago
+                JOIN cajas c ON c.id = vp.cuentaPago
+                WHERE vp.fecha_registro BETWEEN :ini AND :fin
+
+                ORDER BY fecha_registro DESC";
+
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute([
+            'ini' => $ini,
+            'fin' => $fin
+        ]);
+
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        // ---- Excel ----
+        $spreadsheet = new Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+
+        $headers = ['ID','Fecha','Fecha Registro','Documento','Cli/Prov','Movimiento','Usuario','Sucursal','Medio pago','Cuenta','Operacion','Monto','Monto Pendiente','Observacion'];
+
+        $col = 'A';
+        foreach ($headers as $header) {
+            $sheet->setCellValue($col . '1', $header);
+            $col++;
+        }
+
+        $rowIndex = 2;
+
+        foreach ($rows as $row) {
+
+            $doc = preg_replace('/\D/', '', $row['documento']);
+
+            // DNI o RUC
+            if (strlen($doc) <= 8) {
+                $doc = str_pad($doc, 8, "0", STR_PAD_LEFT);
+            } else {
+                $doc = str_pad($doc, 11, "0", STR_PAD_LEFT);
+            }
+
+            $sheet->setCellValue("A{$rowIndex}", $row['id']);
+            $sheet->setCellValue("B{$rowIndex}", $row['fecha']);
+            $sheet->setCellValue("C{$rowIndex}", $row['fecha_registro']);
+
+            // 🔥 IMPORTANTE: string para no perder ceros
+            $sheet->setCellValueExplicit("D{$rowIndex}", $doc, DataType::TYPE_STRING);
+
+            $sheet->setCellValue("E{$rowIndex}", $row['cliente']);
+            $sheet->setCellValue("F{$rowIndex}", $row['movimiento']);
+            $sheet->setCellValue("G{$rowIndex}", $row['usuario']);
+            $sheet->setCellValue("H{$rowIndex}", $row['sucursal']);
+            $sheet->setCellValue("I{$rowIndex}", $row['tipopago']);
+            $sheet->setCellValue("J{$rowIndex}", $row['cuenta']);
+            $sheet->setCellValue("K{$rowIndex}", $row['numero_operacion']);
+            $sheet->setCellValue("L{$rowIndex}", $row['monto']);
+            $sheet->setCellValue("M{$rowIndex}", $row['monto_pendiente']);
+            $sheet->setCellValue("N{$rowIndex}", $row['observacion']);
+
+            $rowIndex++;
+        }
+
+        // ---- Salida ----
+        $writer = new Xlsx($spreadsheet);
+
+        ob_start();
+        $writer->save('php://output');
+        $excelOutput = ob_get_clean();
+
+        $response->getBody()->write($excelOutput);
+
+        return $response
+            ->withHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+            ->withHeader('Content-Disposition', 'attachment; filename="reporte_caja.xlsx"');
+
+    } catch (Exception $e) {
+
+        $response->getBody()->write(json_encode([
+            "STATUS" => false,
+            "message" => $e->getMessage()
+        ]));
+
+        return $response->withHeader('Content-Type', 'application/json');
+    }
 });
 
 
 
 
-$app->get('/contacto', function($request, $response, $args){
-    $response->getBody()->write('Pagina contacto');
-    return $response;
-});
+$app->post('/exportarclientes', function (Request $request, Response $response) use ($pdo) {
 
-$app->get('/blog', function($request, $response, $args){
-    $response->getBody()->write('Pagina blog');
-    return $response;
-});
+    $dat = json_decode($request->getBody()->getContents(), true);
 
+    // ---- Fechas ----
+    $arraymeses = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    $arraynros  = ['01','02','03','04','05','06','07','08','09','10','11','12'];
+
+    $mes1 = substr($dat['ini'], 3, 3);
+    $mes2 = substr($dat['fin'], 3, 3);
+    $dia1 = substr($dat['ini'], 0, 2);
+    $dia2 = substr($dat['fin'], 0, 2);
+    $ano1 = substr($dat['ini'], 7, 4);
+    $ano2 = substr($dat['fin'], 7, 4);
+
+    $ini = $ano1 . '-' . str_replace($arraymeses, $arraynros, $mes1) . '-' . $dia1 . " 00:00:00";
+    $fin = $ano2 . '-' . str_replace($arraymeses, $arraynros, $mes2) . '-' . $dia2 . " 23:59:00";
+
+    try {
+
+        // ---- SQL seguro ----
+        $sql = "SELECT 
+                    c.id,
+                    c.nombre,
+                    SUM(v.valor_total) AS total,
+                    SUM(v.monto_pendiente) AS pendiente,
+                    COUNT(v.id_cliente) AS pedidos
+                FROM ventas v
+                INNER JOIN clientes c ON v.id_cliente = c.id
+                WHERE v.fecha_registro BETWEEN :ini AND :fin
+                GROUP BY c.id, c.nombre
+                ORDER BY total DESC";
+
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute([
+            'ini' => $ini,
+            'fin' => $fin
+        ]);
+
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        // ---- Crear Excel ----
+        $spreadsheet = new Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+
+        $headers = ['ID','Nombre','Total','Pendiente','Pedidos'];
+
+        $col = 'A';
+        foreach ($headers as $header) {
+            $sheet->setCellValue($col . '1', $header);
+            $col++;
+        }
+
+        $rowIndex = 2;
+
+        foreach ($rows as $row) {
+
+            $sheet->setCellValue("A{$rowIndex}", $row['id']);
+            $sheet->setCellValue("B{$rowIndex}", $row['nombre']);
+            $sheet->setCellValue("C{$rowIndex}", $row['total']);
+            $sheet->setCellValue("D{$rowIndex}", $row['pendiente']);
+            $sheet->setCellValue("E{$rowIndex}", $row['pedidos']);
+
+            $rowIndex++;
+        }
+
+        // ---- Exportar ----
+        $writer = new Xlsx($spreadsheet);
+
+        ob_start();
+        $writer->save('php://output');
+        $excelOutput = ob_get_clean();
+
+        $response->getBody()->write($excelOutput);
+
+        return $response
+            ->withHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+            ->withHeader('Content-Disposition', 'attachment; filename="reporte_clientes.xlsx"');
+
+    } catch (Exception $e) {
+
+        $response->getBody()->write(json_encode([
+            "STATUS" => false,
+            "message" => $e->getMessage()
+        ]));
+
+        return $response->withHeader('Content-Type', 'application/json');
+    }
+});
 
 $app->run();

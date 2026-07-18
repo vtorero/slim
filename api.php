@@ -15,11 +15,19 @@ use Psr\Http\Message\ServerRequestInterface as Request;
 use Slim\Factory\AppFactory;
 
 $app = AppFactory::create();
-//$pdo = new mysqli("lh-cjm.com","aprendea_erp","erp2023*","aprendea_erp")
+/*Produccion
 $dsn = "mysql:host=lh-cjm.com;dbname=aprendea_erp;port=3306;charset=utf8";
+$usuario="aprendea_erp";
+$clave="erp2023*";
+*/
+/*Local dev*/
+$dsn = "mysql:host=localhost;dbname=erp;port=3306;charset=utf8";
+$usuario="root";
+$clave= "";
+
 
 try {
-    $pdo = new PDO($dsn, "aprendea_erp", "erp2023*", [
+    $pdo = new PDO($dsn, $usuario, $clave, [
         PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
         PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_OBJ,
     ]);
@@ -197,6 +205,7 @@ $app->get('/articulos', function (Request $request, Response $response) use ($pd
                 fa.nombre AS familia,
                 p.unidad,
                 p.precio,
+                p.precio_compra,
                 p.imagen
             FROM productos p
             LEFT JOIN categorias c ON p.id_categoria = c.id
@@ -241,8 +250,8 @@ $app->post('/subcategoria', function (Request $request, Response $response) use 
     $data = json_decode($j['json']);
 
     try {
-        $sql = "INSERT INTO sub_categorias (id_categoria, nombre)
-                VALUES (:id_categoria, :nombre)";
+        $sql = "INSERT INTO sub_categorias (id_categoria, nombre,usuario)
+                VALUES (:id_categoria, :nombre,'admin')";
 
         $stmt = $pdo->prepare($sql);
 
@@ -254,19 +263,78 @@ $app->post('/subcategoria', function (Request $request, Response $response) use 
         if ($proceso) {
             $result = [
                 "STATUS"  => true,
-                "message" => "Subcategoría creada correctamente"
+                "messaje" => "Subcategoría creada correctamente"
             ];
         } else {
             $result = [
                 "STATUS"  => false,
-                "message" => "Ocurrió un error en la creación"
+                "messaje" => "Ocurrió un error en la creación"
             ];
         }
 
     } catch (PDOException $e) {
         $result = [
             "STATUS"  => false,
-            "message" => $e->getMessage()
+            "messaje" => $e->getMessage()
+        ];
+    }
+
+    $response->getBody()->write(json_encode($result));
+
+    return $response
+        ->withHeader('Content-Type', 'application/json')
+        ->withStatus(200);
+});
+
+$app->post('/familia', function ($request, $response) use ($pdo) {
+
+    header("Content-Type: application/json; charset=utf-8");
+
+    $body = $request->getBody()->getContents();
+
+    $j = json_decode($body, true);
+
+    $data = json_decode($j['json']);
+
+    try {
+
+        $sql = "INSERT INTO sub_sub_categorias (
+                    id_subcategoria,
+                    nombre,
+                    usuario
+                ) VALUES (
+                    :id_subcategoria,
+                    :nombre,
+                    'admin'
+                )";
+
+        $stmt = $pdo->prepare($sql);
+
+        $proceso = $stmt->execute([
+            ':id_subcategoria' => $data->id_subCategoria,
+            ':nombre' => $data->nombre
+        ]);
+
+        if ($proceso) {
+
+            $result = [
+                "STATUS" => true,
+                "messaje" => "Familia creada correctamente"
+            ];
+
+        } else {
+
+            $result = [
+                "STATUS" => false,
+                "messaje" => "Ocurrió un error en la creación"
+            ];
+        }
+
+    } catch (PDOException $e) {
+
+        $result = [
+            "STATUS" => false,
+            "messaje" => $e->getMessage()
         ];
     }
 
@@ -421,6 +489,7 @@ $app->post('/buscaarticulos', function (Request $request, Response $response) us
                     fa.nombre AS familia,
                     p.unidad,
                     p.precio,
+                    p.precio_compra,
                     p.imagen
                 FROM productos p
                 LEFT JOIN categorias c ON p.id_categoria = c.id
@@ -863,33 +932,290 @@ $app->get('/buscarproducto/{criterio}', function (Request $request, Response $re
 });
 
 
+$app->get('/kardex', function (Request $request, Response $response) use ($pdo) {
+
+    header("Content-Type: application/json; charset=utf-8");
+
+    // Fecha actual
+    $ini = date('Y-m-d') . ' 00:00:00';
+    $fin = date('Y-m-d') . ' 23:59:59';
+
+
+
+    try {
+
+        /*
+        |--------------------------------------------------------------------------
+        | PRODUCTOS + STOCK + ÚLTIMO PROMEDIO
+        |--------------------------------------------------------------------------
+        */
+
+        $sqlProductos = "
+            SELECT DISTINCT
+                p.id,
+                p.codigo,
+                p.nombre,
+                p.categoria,
+
+                (
+                    SELECT ma.promedio
+                    FROM movimiento_articulos ma
+                    WHERE ma.codigo_prod = p.id
+                    ORDER BY ma.id DESC
+                    LIMIT 1
+                ) AS promedio,
+
+                (
+                    SELECT ma.cantidad_acumulada
+                    FROM movimiento_articulos ma
+                    WHERE ma.codigo_prod = p.id
+                    ORDER BY ma.id DESC
+                    LIMIT 1
+                ) AS cantidad_acumulada,
+
+                (
+                    SELECT COALESCE(SUM(ma.cantidad_ingreso) - SUM(ma.cantidad_salida),0)
+                    FROM movimiento_articulos ma
+                    WHERE ma.codigo_prod = p.id
+                ) AS stock
+
+            FROM movimiento_articulos m
+            INNER JOIN productos p ON p.id = m.codigo_prod
+
+            WHERE m.fecha_registro BETWEEN :ini AND :fin
+
+
+            ORDER BY p.id DESC";
+
+        $stmt = $pdo->prepare($sqlProductos);
+        $stmt->execute([
+            ':ini' => $ini,
+            ':fin' => $fin
+        ]);
+
+        $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        if (empty($productos)) {
+
+            $response->getBody()->write(json_encode([]));
+
+            return $response
+                ->withHeader('Content-Type', 'application/json')
+                ->withStatus(200);
+        }
+
+        $ids = array_column($productos, 'id');
+
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+
+        $sqlDetalle = "
+            SELECT
+                m.id,
+                m.codigo_prod,
+                m.tipo_movimiento,
+                m.estado,
+                s.id AS id_almacen,
+                s.nombre AS almacen,
+                m.id_compra,
+                m.id_venta,
+                m.cantidad_acumulada,
+                u.nombre AS unidad,
+                m.cantidad_movimiento,
+                ROUND(m.cantidad_acumulada * m.promedio,2) AS p_total,
+                m.cantidad_ingreso,
+                m.cantidad_salida,
+                m.precio,
+                m.promedio,
+                ROUND(m.cantidad_acumulada * m.precio,2) AS costo,
+                m.comentario,
+                m.fecha_registro
+
+            FROM movimiento_articulos m
+
+            INNER JOIN sucursales s
+                ON s.id = m.id_sucursal
+
+            INNER JOIN productos p
+                ON p.id = m.codigo_prod
+
+            INNER JOIN unidad u
+                ON u.codigo = p.unidad
+
+            WHERE m.codigo_prod IN ($placeholders)
+
+            AND m.fecha_registro BETWEEN ? AND ?
+
+            AND NOT (
+                m.cantidad_ingreso = 0
+                AND m.cantidad_salida = 0
+            )
+
+            AND m.precio <> 0
+
+            ORDER BY
+                m.codigo_prod,
+                m.id DESC";
+
+        $detalleParams = $ids;
+        $detalleParams[] = $ini;
+        $detalleParams[] = $fin;
+
+        $stmtDetalle = $pdo->prepare($sqlDetalle);
+        $stmtDetalle->execute($detalleParams);
+
+        $detalles = $stmtDetalle->fetchAll(PDO::FETCH_ASSOC);
+
+        $detallePorProducto = [];
+
+        foreach ($detalles as $detalle) {
+
+            $detallePorProducto[$detalle['codigo_prod']][] = [
+                'id'                 => $detalle['id'],
+                'tipo_movimiento'    => $detalle['tipo_movimiento'],
+                'estado'             => $detalle['estado'],
+                'id_almacen'         => $detalle['id_almacen'],
+                'almacen'            => $detalle['almacen'],
+                'id_compra'          => $detalle['id_compra'],
+                'id_venta'           => $detalle['id_venta'],
+                'cantidad_acumulada' => $detalle['cantidad_acumulada'],
+                'unidad'             => $detalle['unidad'],
+                'cantidad_movimiento'=> $detalle['cantidad_movimiento'],
+                'p_total'            => $detalle['p_total'],
+                'cantidad_ingreso'   => $detalle['cantidad_ingreso'],
+                'cantidad_salida'    => $detalle['cantidad_salida'],
+                'precio'             => $detalle['precio'],
+                'promedio'           => $detalle['promedio'],
+                'costo'              => $detalle['costo'],
+                'comentario'         => $detalle['comentario'],
+                'fecha_registro'     => date(
+                    'd-m-Y H:i:s',
+                    strtotime($detalle['fecha_registro'])
+                )
+            ];
+        }
+
+        foreach ($productos as &$producto) {
+
+            $producto['promedio'] = [
+                'promedio' => $producto['promedio'],
+                'cantidad_acumulada' => $producto['cantidad_acumulada']
+            ];
+
+            $producto['stock'] = [
+                'cantidad' => $producto['stock']
+            ];
+
+            $producto['detalle'] =
+                $detallePorProducto[$producto['id']] ?? [];
+        }
+
+        unset($producto);
+
+        $response->getBody()->write(
+            json_encode($productos, JSON_UNESCAPED_UNICODE)
+        );
+
+        return $response
+            ->withHeader('Content-Type', 'application/json')
+            ->withStatus(200);
+
+    } catch (PDOException $e) {
+
+        $response->getBody()->write(json_encode([
+            'STATUS' => false,
+            'message' => $e->getMessage()
+        ]));
+
+        return $response
+            ->withHeader('Content-Type', 'application/json')
+            ->withStatus(500);
+    }
+});
+
+
+
+
 $app->post('/kardex', function (Request $request, Response $response) use ($pdo) {
+
+    header("Content-Type: application/json; charset=utf-8");
 
     $body = $request->getBody()->getContents();
     $j = json_decode($body, true);
     $data = json_decode($j['json'], true);
 
-    // 🔹 Conversión de fechas (igual a tu lógica)
     $arraymeses = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     $arraynros  = ['01','02','03','04','05','06','07','08','09','10','11','12'];
 
-    $mes1 = substr($data['inicio'], 0,3);
-    $mes2 = substr($data['fin'], 0,3);
-    $dia1 = substr($data['inicio'], 3,2);
-    $dia2 = substr($data['fin'], 3,2);
-    $ano1 = substr($data['inicio'], 5,4);
-    $ano2 = substr($data['fin'], 5,4);
+    $mes1 = substr($data['inicio'], 0, 3);
+    $mes2 = substr($data['fin'], 0, 3);
 
-    $ini = $ano1.'-'.str_replace($arraymeses,$arraynros,$mes1).'-'.$dia1.' 00:00:01';
-    $fin = $ano2.'-'.str_replace($arraymeses,$arraynros,$mes2).'-'.$dia2.' 23:59:59';
+    $dia1 = substr($data['inicio'], 3, 2);
+    $dia2 = substr($data['fin'], 3, 2);
+
+    $ano1 = substr($data['inicio'], 5, 4);
+    $ano2 = substr($data['fin'], 5, 4);
+
+    $ini = $ano1 . '-' . str_replace($arraymeses, $arraynros, $mes1) . '-' . $dia1 . ' 00:00:01';
+    $fin = $ano2 . '-' . str_replace($arraymeses, $arraynros, $mes2) . '-' . $dia2 . ' 23:59:59';
 
     try {
 
-        // 🔹 Query principal
-        $sql1 = "SELECT p.id, p.codigo, p.nombre, p.categoria
-                 FROM movimiento_articulos m
-                 INNER JOIN productos p ON m.codigo_prod = p.id
-                 WHERE m.fecha_registro BETWEEN :ini AND :fin";
+        /*
+        |--------------------------------------------------------------------------
+        | PRODUCTOS + STOCK + ÚLTIMO PROMEDIO
+        |--------------------------------------------------------------------------
+        */
+
+        $sqlProductos = "
+    SELECT
+        p.id,
+        p.codigo,
+        p.nombre,
+        p.categoria,
+
+        ult.promedio,
+        ult.cantidad_acumulada,
+
+        ult.cantidad_acumulada AS stock
+
+    FROM productos p
+
+    INNER JOIN (
+
+        SELECT
+            m1.codigo_prod,
+            m1.promedio,
+            m1.cantidad_acumulada
+
+        FROM movimiento_articulos m1
+
+        INNER JOIN (
+
+            SELECT
+                codigo_prod,
+                MAX(id) AS id
+
+            FROM movimiento_articulos
+
+            WHERE fecha_registro <= :fin
+
+            GROUP BY codigo_prod
+
+        ) mx ON mx.id = m1.id
+
+    ) ult ON ult.codigo_prod = p.id
+
+    WHERE EXISTS (
+
+
+    SELECT 1
+    FROM movimiento_articulos ma
+    WHERE ma.codigo_prod = p.id
+      AND fecha_registro BETWEEN :ini AND :fin
+
+
+    )
+";
 
         $params = [
             ':ini' => $ini,
@@ -897,113 +1223,202 @@ $app->post('/kardex', function (Request $request, Response $response) use ($pdo)
         ];
 
         if (!empty($data['producto'])) {
-            $sql1 .= " AND m.codigo_prod = :producto";
+            $sqlProductos .= " AND codigo_prod = :producto";
             $params[':producto'] = $data['producto'];
         }
 
-        $sql1 .= " GROUP BY p.id ORDER BY p.id DESC";
+        $sqlProductos .= " ORDER BY p.id DESC";
 
-        $stmt = $pdo->prepare($sql1);
+        //echo $sqlProductos;
+        //exit;
+
+        $stmt = $pdo->prepare($sqlProductos);
         $stmt->execute($params);
 
         $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-        $prods = [];
+        if (empty($productos)) {
 
-        foreach ($productos as $fila) {
+            $response->getBody()->write(json_encode([]));
 
-            $id = $fila['id'];
-
-            // 🔹 DETALLE
-            $sqlDetalle = "SELECT
-                                m.id,
-                                m.tipo_movimiento,
-                                s.nombre AS almacen,
-                                m.id_compra,
-                                m.id_venta,
-                                m.cantidad_acumulada,
-                                u.nombre AS unidad,
-                                m.cantidad_movimiento,
-                                ROUND(m.cantidad_acumulada*m.promedio,2) AS p_total,
-                                m.cantidad_ingreso,
-                                m.cantidad_salida,
-                                m.precio,
-                                m.promedio,
-                                ROUND(m.cantidad_acumulada*m.precio,2) AS costo,
-                                m.comentario,
-                                DATE_FORMAT(m.fecha_registro,'%d-%m-%Y') AS fecha_registro
-                            FROM movimiento_articulos m
-                            INNER JOIN sucursales s ON s.id = m.id_sucursal
-                            INNER JOIN productos p ON m.codigo_prod = p.id
-                            INNER JOIN unidad u ON p.unidad = u.codigo
-                            WHERE m.codigo_prod = :id
-                              AND NOT (m.cantidad_ingreso = 0 AND m.cantidad_salida = 0)
-                              AND m.precio <> 0";
-
-            $paramsDetalle = [':id' => $id];
-
-            if (!empty($data['sucursal']) && $data['sucursal'] != "0") {
-                $sqlDetalle .= " AND m.id_almacen = :sucursal";
-                $paramsDetalle[':sucursal'] = $data['sucursal'];
-            }
-
-            if (!empty($data['movimiento']) && $data['movimiento'] != "0") {
-                $sqlDetalle .= " AND m.tipo_movimiento = :movimiento";
-                $paramsDetalle[':movimiento'] = $data['movimiento'];
-            }
-
-            if (!empty($data['compra'])) {
-                $sqlDetalle .= " AND m.id_compra = :compra";
-                $paramsDetalle[':compra'] = $data['compra'];
-            }
-
-            if (!empty($data['venta'])) {
-                $sqlDetalle .= " AND m.id_venta = :venta";
-                $paramsDetalle[':venta'] = $data['venta'];
-            }
-
-            $sqlDetalle .= " ORDER BY m.id DESC";
-
-            $stmtDet = $pdo->prepare($sqlDetalle);
-            $stmtDet->execute($paramsDetalle);
-
-            $fila['detalle'] = $stmtDet->fetchAll(PDO::FETCH_ASSOC);
-
-            // 🔹 PROMEDIO
-            $sqlProm = "SELECT promedio, cantidad_acumulada
-                        FROM movimiento_articulos
-                        WHERE codigo_prod = :id
-                        ORDER BY id DESC LIMIT 1";
-
-            $stmtProm = $pdo->prepare($sqlProm);
-            $stmtProm->execute([':id' => $id]);
-            $fila['promedio'] = $stmtProm->fetch(PDO::FETCH_ASSOC);
-
-            // 🔹 STOCK
-            $sqlStock = "SELECT
-                            SUM(cantidad_ingreso) - SUM(cantidad_salida) AS cantidad
-                         FROM movimiento_articulos
-                         WHERE codigo_prod = :id";
-
-            $stmtStock = $pdo->prepare($sqlStock);
-            $stmtStock->execute([':id' => $id]);
-            $fila['stock'] = $stmtStock->fetch(PDO::FETCH_ASSOC);
-
-            $prods[] = $fila;
+            return $response
+                ->withHeader('Content-Type', 'application/json')
+                ->withStatus(200);
         }
 
-        $response->getBody()->write(json_encode($prods));
+        /*
+        |--------------------------------------------------------------------------
+        | IDs DE PRODUCTOS
+        |--------------------------------------------------------------------------
+        */
 
-        return $response->withHeader('Content-Type', 'application/json')->withStatus(200);
+        $ids = array_column($productos, 'id');
+
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+
+        /*
+        |--------------------------------------------------------------------------
+        | DETALLES (UNA SOLA CONSULTA)
+        |--------------------------------------------------------------------------
+        */
+
+        $sqlDetalle = "
+            SELECT
+                m.id,
+                m.codigo_prod,
+                m.tipo_movimiento,
+                m.estado,
+                s.nombre AS almacen,
+                s.id AS id_almacen,
+                m.id_compra,
+                m.id_venta,
+                m.cantidad_acumulada,
+                u.nombre AS unidad,
+                m.cantidad_movimiento,
+                ROUND(m.cantidad_acumulada * m.promedio,2) AS p_total,
+                m.cantidad_ingreso,
+                m.cantidad_salida,
+                m.precio,
+                m.promedio,
+                ROUND(m.cantidad_acumulada * m.precio,2) AS costo,
+                m.comentario,
+                m.fecha_registro
+
+            FROM movimiento_articulos m
+
+            INNER JOIN sucursales s
+                ON s.id = m.id_sucursal
+
+            INNER JOIN productos p
+                ON p.id = m.codigo_prod
+
+            INNER JOIN unidad u
+                ON u.codigo = p.unidad
+
+          WHERE m.codigo_prod IN ($placeholders)
+
+            AND m.fecha_registro BETWEEN ? AND ?
+
+            AND NOT (
+                m.cantidad_ingreso = 0
+                AND m.cantidad_salida = 0
+                )
+
+            AND m.precio <> 0
+        ";
+
+        $detalleParams = $ids;
+
+        $detalleParams[] = $ini;
+        $detalleParams[] = $fin;
+
+        if (!empty($data['sucursal']) && $data['sucursal'] != "0") {
+            $sqlDetalle .= " AND m.id_sucursal = ?";
+            $detalleParams[] = $data['sucursal'];
+        }
+
+        if (!empty($data['movimiento']) && $data['movimiento'] != "0") {
+            $sqlDetalle .= " AND m.tipo_movimiento = ?";
+            $detalleParams[] = $data['movimiento'];
+        }
+
+        if (!empty($data['compra'])) {
+            $sqlDetalle .= " AND m.id_compra = ?";
+            $detalleParams[] = $data['compra'];
+        }
+
+        if (!empty($data['venta'])) {
+            $sqlDetalle .= " AND m.id_venta = ?";
+            $detalleParams[] = $data['venta'];
+        }
+
+        $sqlDetalle .= "
+            ORDER BY
+                m.codigo_prod,
+                m.id DESC
+        ";
+
+        $stmtDetalle = $pdo->prepare($sqlDetalle);
+        $stmtDetalle->execute($detalleParams);
+
+        $detalles = $stmtDetalle->fetchAll(PDO::FETCH_ASSOC);
+
+        /*
+        |--------------------------------------------------------------------------
+        | AGRUPAR DETALLES POR PRODUCTO
+        |--------------------------------------------------------------------------
+        */
+
+        $detallePorProducto = [];
+
+        foreach ($detalles as $detalle) {
+
+            $detallePorProducto[$detalle['codigo_prod']][] = [
+                'id'                 => $detalle['id'],
+                'tipo_movimiento'    => $detalle['tipo_movimiento'],
+                'estado'             => $detalle['estado'],
+                'id_almacen'         => $detalle['id_almacen'],
+                'almacen'            => $detalle['almacen'],
+                'id_compra'          => $detalle['id_compra'],
+                'id_venta'           => $detalle['id_venta'],
+                'cantidad_acumulada' => $detalle['cantidad_acumulada'],
+                'unidad'             => $detalle['unidad'],
+                'cantidad_movimiento'=> $detalle['cantidad_movimiento'],
+                'p_total'            => $detalle['p_total'],
+                'cantidad_ingreso'   => $detalle['cantidad_ingreso'],
+                'cantidad_salida'    => $detalle['cantidad_salida'],
+                'precio'             => $detalle['precio'],
+                'promedio'           => $detalle['promedio'],
+                'costo'              => $detalle['costo'],
+                'comentario'         => $detalle['comentario'],
+                'fecha_registro'     => date(
+                    'd-m-Y H:i:s',
+                    strtotime($detalle['fecha_registro'])
+                )
+            ];
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | ARMAR RESPUESTA
+        |--------------------------------------------------------------------------
+        */
+
+        foreach ($productos as &$producto) {
+
+            $producto['promedio'] = [
+                'promedio' => $producto['promedio'],
+                'cantidad_acumulada' => $producto['cantidad_acumulada']
+            ];
+
+            $producto['stock'] = [
+                'cantidad' => $producto['stock']
+            ];
+
+            $producto['detalle'] =
+                $detallePorProducto[$producto['id']] ?? [];
+        }
+
+        unset($producto);
+
+        $response->getBody()->write(
+            json_encode($productos, JSON_UNESCAPED_UNICODE)
+        );
+
+        return $response
+            ->withHeader('Content-Type', 'application/json')
+            ->withStatus(200);
 
     } catch (PDOException $e) {
 
         $response->getBody()->write(json_encode([
-            "STATUS" => false,
-            "message" => $e->getMessage()
+            'STATUS' => false,
+            'message' => $e->getMessage()
         ]));
 
-        return $response->withHeader('Content-Type', 'application/json')->withStatus(500);
+        return $response
+            ->withHeader('Content-Type', 'application/json')
+            ->withStatus(500);
     }
 });
 
@@ -1156,7 +1571,7 @@ $app->post('/venta', function (Request $request, Response $response) use ($pdo) 
             $stmtP = $pdo->prepare("CALL p_venta_pago(?,?,?,?,?,?,?)");
             $stmtP->execute([
                 $ultimo_id->ultimo_id,
-                $pago->tipoPago,
+                '',
                 $pago->numero,
                 $pago->cuentaPago,
                 $pago->montoPago,
@@ -1198,7 +1613,7 @@ $app->post('/venta', function (Request $request, Response $response) use ($pdo) 
             ]);
 
             // movimiento
-            $stmtMov = $pdo->prepare("CALL p_registrar_movimiento(?,?,?,?,?,?,?)");
+            $stmtMov = $pdo->prepare("CALL p_registrar_movimiento(?,?,?,?,?,?,?,?)");
             $stmtMov->execute([
                 $item->id,
                 $ultimo_id->ultimo_id,
@@ -1206,7 +1621,9 @@ $app->post('/venta', function (Request $request, Response $response) use ($pdo) 
                 $item->despacho,
                 $item->precio,
                 $data->usuario,
-                $data->sucursal
+                $data->sucursal,
+                'Venta realizada nro'. $ultimo_id->ultimo_id
+
             ]);
             $stmtMov->closeCursor();
         }
@@ -1259,9 +1676,9 @@ $app->get('/pagos/{id}', function (Request $request, Response $response, $args) 
 
     $id = $args['id'];
 
-    $sql = "SELECT p.*, tp.nombre, c.nombre AS caja
+    $sql = "SELECT p.*, c.nombre AS caja
             FROM venta_pagos p
-            INNER JOIN tipoPago tp ON p.tipoPago = tp.id
+            /*INNER JOIN tipoPago tp ON p.tipoPago = tp.id*/
             INNER JOIN cajas c ON p.cuentaPago = c.id
             WHERE p.id_venta = :id";
 
@@ -1456,7 +1873,7 @@ $app->post('/compra', function (Request $request, Response $response) use ($pdo)
             $stmtP = $pdo->prepare("CALL p_compra_pago(?,?,?,?,?,?,?)");
             $stmtP->execute([
                 $ultimo_id->ultimo_id,
-                $pago->tipoPago,
+                '',
                 $pago->numero,
                 $pago->cuentaPago,
                 $pago->montoPago,
@@ -1499,7 +1916,7 @@ $app->post('/compra', function (Request $request, Response $response) use ($pdo)
             ]);
 
             // movimiento
-            $stmtMov = $pdo->prepare("CALL p_registrar_movimiento(?,?,?,?,?,?,?)");
+            $stmtMov = $pdo->prepare("CALL p_registrar_movimiento(?,?,?,?,?,?,?,?)");
             $stmtMov->execute([
                 $item->id,
                 $ultimo_id->ultimo_id,
@@ -1507,7 +1924,8 @@ $app->post('/compra', function (Request $request, Response $response) use ($pdo)
                 ($item->cantidad - $item->pendiente),
                 $item->precio,
                 $data->usuario,
-                $data->sucursal
+                $data->sucursal,
+                'Compra nro:'.$ultimo_id->ultimo_id.' Tipo Doc:'.$data->tipoDoc.' Nro:'.$data->nrodocumento.' Serie:'.$data->seriedoc
             ]);
             $stmtMov->closeCursor();
         }
@@ -1543,17 +1961,10 @@ $app->post('/actualiza-monto', function (Request $request, Response $response) u
     try {
 
         // Obtener monto pendiente actual
-<<<<<<< HEAD
         $stmt = $pdo->prepare("SELECT monto_pendiente
                              FROM venta_pagos
                              WHERE id_venta = :id_venta
                              ORDER BY id DESC
-=======
-        $stmt = $pdo->prepare("SELECT monto_pendiente 
-                             FROM venta_pagos 
-                             WHERE id_venta = :id_venta 
-                             ORDER BY id DESC 
->>>>>>> 004f6d84d0cb8ae60075fc98a0329cdc143f528c
                              LIMIT 1");
         $stmt->execute(['id_venta' => $data->id_venta]);
         $prods = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -1569,11 +1980,7 @@ $app->post('/actualiza-monto', function (Request $request, Response $response) u
             $nuevoMonto = $montoPendiente - $data->monto;
 
             // Insertar pago
-<<<<<<< HEAD
             $stmtInsert = $pdo->prepare("INSERT INTO venta_pagos
-=======
-            $stmtInsert = $pdo->prepare("INSERT INTO venta_pagos 
->>>>>>> 004f6d84d0cb8ae60075fc98a0329cdc143f528c
                 (id_venta, tipoPago, numero_operacion, cuentaPago, monto, monto_pendiente, estado, usuario)
                 VALUES (:id_venta, :tipo_pago, :numero, :cuenta_pago, :monto, :monto_pendiente, 1, :usuario)");
 
@@ -1588,13 +1995,8 @@ $app->post('/actualiza-monto', function (Request $request, Response $response) u
             ]);
 
             // Actualizar venta
-<<<<<<< HEAD
             $stmtUpdate = $pdo->prepare("UPDATE ventas
                                        SET monto_pendiente = :monto
-=======
-            $stmtUpdate = $pdo->prepare("UPDATE ventas 
-                                       SET monto_pendiente = :monto 
->>>>>>> 004f6d84d0cb8ae60075fc98a0329cdc143f528c
                                        WHERE id = :id_venta");
 
             $stmtUpdate->execute([
@@ -1604,13 +2006,8 @@ $app->post('/actualiza-monto', function (Request $request, Response $response) u
 
             // Validar si quedó en 0
             if ($nuevoMonto == 0) {
-<<<<<<< HEAD
                 $stmtZero = $pdo->prepare("UPDATE venta_pagos
                                          SET monto_pendiente = 0
-=======
-                $stmtZero = $pdo->prepare("UPDATE venta_pagos 
-                                         SET monto_pendiente = 0 
->>>>>>> 004f6d84d0cb8ae60075fc98a0329cdc143f528c
                                          WHERE id_venta = :id_venta");
 
                 $stmtZero->execute([
@@ -1659,15 +2056,9 @@ $app->get('/buscarclientes/{criterio}', function (Request $request, Response $re
     try {
 
         $stmt = $pdo->prepare("
-<<<<<<< HEAD
             SELECT *
             FROM aprendea_erp.clientes
             WHERE nombre LIKE :criterio
-=======
-            SELECT * 
-            FROM aprendea_erp.clientes 
-            WHERE nombre LIKE :criterio 
->>>>>>> 004f6d84d0cb8ae60075fc98a0329cdc143f528c
                OR num_documento LIKE :criterio
         ");
 
@@ -1704,15 +2095,9 @@ $app->get('/buscarproveedor/{criterio}', function (Request $request, Response $r
     try {
 
         $stmt = $pdo->prepare("
-<<<<<<< HEAD
             SELECT *
             FROM aprendea_erp.proveedores
             WHERE razon_social LIKE :criterio
-=======
-            SELECT * 
-            FROM aprendea_erp.proveedores 
-            WHERE razon_social LIKE :criterio 
->>>>>>> 004f6d84d0cb8ae60075fc98a0329cdc143f528c
                OR num_documento LIKE :criterio
         ");
 
@@ -1751,13 +2136,8 @@ $app->post('/actualiza-pendiente-venta', function (Request $request, Response $r
 
         // Obtener detalle de venta
         $stmt = $pdo->prepare("
-<<<<<<< HEAD
             SELECT d.*
-            FROM aprendea_erp.venta_detalle d
-=======
-            SELECT d.* 
-            FROM aprendea_erp.venta_detalle d 
->>>>>>> 004f6d84d0cb8ae60075fc98a0329cdc143f528c
+            FROM venta_detalle d
             WHERE id = :id AND id_venta = :id_venta
         ");
 
@@ -1788,29 +2168,29 @@ $app->post('/actualiza-pendiente-venta', function (Request $request, Response $r
         $stmtCall = $pdo->prepare("CALL p_registrar_movimiento(
             :id_producto,
             :id_venta,
-            'Salida',
+            :salida,
             :cantidad,
             :precio,
             :usuario,
-            :sucursal
+            :sucursal,
+            :comentario
         )");
 
         $stmtCall->execute([
             'id_producto' => $data->id_producto,
             'id_venta' => $data->id_venta,
+            'salida'=>'Salida',
             'cantidad' => $cantidad,
             'precio' => $prod['precio'],
             'usuario' => $data->usuario,
-            'sucursal' => $data->sucursal
+            'sucursal' => $data->sucursal,
+            'comentario'=>'Entrega pendiente producto '.$data->id_producto.' de venta '.$data->id_venta
         ]);
 
+        $stmtCall->closeCursor();
         // Actualizar pendiente
         $stmtUpdate = $pdo->prepare("
-<<<<<<< HEAD
             UPDATE venta_detalle
-=======
-            UPDATE venta_detalle 
->>>>>>> 004f6d84d0cb8ae60075fc98a0329cdc143f528c
             SET pendiente = :pendiente, usuario = :usuario
             WHERE id_venta = :id_venta AND id_producto = :id_producto
         ");
@@ -1821,20 +2201,13 @@ $app->post('/actualiza-pendiente-venta', function (Request $request, Response $r
             'id_venta' => $data->id_venta,
             'id_producto' => $data->id_producto
         ]);
-
+        $stmtUpdate->closeCursor();
         // Actualizar inventario
         $stmtInv = $pdo->prepare("
-<<<<<<< HEAD
             UPDATE inventario
             SET cantidad = cantidad - :cantidad,
                 fecha_actualizacion = NOW()
             WHERE producto_id = :id_producto
-=======
-            UPDATE inventario 
-            SET cantidad = cantidad - :cantidad,
-                fecha_actualizacion = NOW()
-            WHERE producto_id = :id_producto 
->>>>>>> 004f6d84d0cb8ae60075fc98a0329cdc143f528c
               AND id_almacen = :sucursal
         ");
 
@@ -1844,6 +2217,7 @@ $app->post('/actualiza-pendiente-venta', function (Request $request, Response $r
             'sucursal' => $data->sucursal
         ]);
 
+        $stmtInv->closeCursor();
         $pdo->commit();
 
         $result = [
@@ -1875,13 +2249,8 @@ $app->get('/subcategoria_categoria/{criterio}', function (Request $request, Resp
     try {
 
         $stmt = $pdo->prepare("
-<<<<<<< HEAD
             SELECT nombre, id
             FROM sub_categorias
-=======
-            SELECT nombre, id 
-            FROM sub_categorias 
->>>>>>> 004f6d84d0cb8ae60075fc98a0329cdc143f528c
             WHERE id_categoria = :criterio
             ORDER BY nombre ASC
         ");
@@ -1916,13 +2285,8 @@ $app->get('/familia_subcategoria/{criterio}', function (Request $request, Respon
     try {
 
         $stmt = $pdo->prepare("
-<<<<<<< HEAD
             SELECT id, nombre
             FROM sub_sub_categorias
-=======
-            SELECT id, nombre 
-            FROM sub_sub_categorias 
->>>>>>> 004f6d84d0cb8ae60075fc98a0329cdc143f528c
             WHERE id_subcategoria = :criterio
             ORDER BY nombre ASC
         ");
@@ -1989,13 +2353,8 @@ $app->get('/sub_categorias', function (Request $request, Response $response) use
     try {
 
         $stmt = $pdo->prepare("
-<<<<<<< HEAD
             SELECT id, nombre
             FROM sub_categorias
-=======
-            SELECT id, nombre 
-            FROM sub_categorias 
->>>>>>> 004f6d84d0cb8ae60075fc98a0329cdc143f528c
             ORDER BY id ASC
         ");
 
@@ -2025,13 +2384,8 @@ $app->get('/familia', function (Request $request, Response $response) use ($pdo)
     try {
 
         $stmt = $pdo->prepare("
-<<<<<<< HEAD
             SELECT id, nombre
             FROM sub_sub_categorias
-=======
-            SELECT id, nombre 
-            FROM sub_sub_categorias 
->>>>>>> 004f6d84d0cb8ae60075fc98a0329cdc143f528c
             ORDER BY id ASC
         ");
 
@@ -2059,13 +2413,8 @@ $app->get('/unidad', function (Request $request, Response $response) use ($pdo) 
     try {
 
         $stmt = $pdo->prepare("
-<<<<<<< HEAD
             SELECT id, codigo, nombre
             FROM unidad
-=======
-            SELECT id, codigo, nombre 
-            FROM unidad 
->>>>>>> 004f6d84d0cb8ae60075fc98a0329cdc143f528c
             ORDER BY nombre ASC
         ");
 
@@ -2088,6 +2437,246 @@ $app->get('/unidad', function (Request $request, Response $response) use ($pdo) 
     }
 });
 
+$app->put('/producto', function ($request, $response) use ($pdo) {
+
+    header("Content-Type: application/json; charset=utf-8");
+
+    $body = $request->getBody()->getContents();
+
+    $j = json_decode($body, true);
+
+    $data = json_decode($j['json']);
+
+    try {
+
+        // GUARDAR IMAGEN
+        if (!empty($data->imagen) && !empty($data->nombre_imagen)) {
+
+// GUARDAR IMAGEN
+if (!empty($data->imagen) && !empty($data->nombre_imagen)) {
+
+    $archivo = base64_decode($data->imagen);
+
+    $filePath = $_SERVER['DOCUMENT_ROOT'] . "/erp-api/upload/" . $data->nombre_imagen;
+
+    // Crear imagen desde el contenido binario
+    $image = @imagecreatefromstring($archivo);
+
+    if (!$image) {
+        throw new Exception("La imagen recibida no es válida");
+    }
+
+    // Obtener dimensiones originales
+    $width = imagesx($image);
+    $height = imagesy($image);
+
+    // Redimensionar si supera el ancho máximo
+    $maxWidth = 1200;
+
+    if ($width > $maxWidth) {
+
+        $newWidth = $maxWidth;
+        $newHeight = intval(($height * $newWidth) / $width);
+
+        $resized = imagecreatetruecolor($newWidth, $newHeight);
+
+        // Fondo blanco para imágenes PNG transparentes
+        $white = imagecolorallocate($resized, 255, 255, 255);
+        imagefill($resized, 0, 0, $white);
+
+        imagecopyresampled(
+            $resized,
+            $image,
+            0,
+            0,
+            0,
+            0,
+            $newWidth,
+            $newHeight,
+            $width,
+            $height
+        );
+
+        imagedestroy($image);
+        $image = $resized;
+    }
+
+    // Comprimir hasta llegar a 100 KB aprox.
+    $maxSize = 100 * 1024; // 100 KB
+    $quality = 90;
+    $compressed = null;
+
+    do {
+
+        ob_start();
+        imagejpeg($image, null, $quality);
+        $compressed = ob_get_clean();
+
+        if (strlen($compressed) <= $maxSize) {
+            break;
+        }
+
+        $quality -= 5;
+
+    } while ($quality >= 10);
+
+    file_put_contents($filePath, $compressed);
+
+    imagedestroy($image);
+
+    // Para verificar en los logs
+    error_log(
+        "Imagen guardada: " .
+        round(filesize($filePath) / 1024, 2) .
+        " KB - Calidad: " . $quality
+    );
+
+    $sql = "UPDATE productos SET
+                id_categoria = :id_categoria,
+                id_subcategoria = :id_subcategoria,
+                id_sub_sub_categoria = :id_familia,
+                nombre = :nombre,
+                codigo = :codigo,
+                codigobarras = :codigobarras,
+                unidad = :unidad,
+                precio = :precio,
+                precio_compra = :precio_compra,
+                imagen = :imagen
+            WHERE id = :id";
+
+    $stmt = $pdo->prepare($sql);
+
+    $proceso = $stmt->execute([
+        ':id_categoria' => $data->id_categoria,
+        ':id_subcategoria' => $data->id_subcategoria,
+        ':id_familia' => $data->id_familia,
+        ':nombre' => $data->nombre,
+        ':codigo' => $data->codigo,
+        ':codigobarras' => $data->codigobarras,
+        ':unidad' => $data->unidad,
+        ':precio' => $data->precio,
+        ':precio_compra' => $data->precio_compra,
+        ':imagen' => $data->nombre_imagen,
+        ':id' => $data->id
+    ]);
+}
+
+
+        } else {
+
+            $sql = "UPDATE productos SET
+                        id_categoria = :id_categoria,
+                        id_subcategoria = :id_subcategoria,
+                        id_sub_sub_categoria = :id_familia,
+                        nombre = :nombre,
+                        codigo = :codigo,
+                        codigobarras = :codigobarras,
+                        unidad = :unidad,
+                        precio = :precio,
+                        precio_compra=:precio_compra
+                    WHERE id = :id";
+
+            $stmt = $pdo->prepare($sql);
+
+            $proceso = $stmt->execute([
+                ':id_categoria' => $data->id_categoria,
+                ':id_subcategoria' => $data->id_subcategoria,
+                ':id_familia' => $data->id_familia,
+                ':nombre' => $data->nombre,
+                ':codigo' => $data->codigo,
+                ':codigobarras' => $data->codigobarras,
+                ':unidad' => $data->unidad,
+                ':precio' => $data->precio,
+                ':precio_compra' => $data->precio_compra,
+                ':id' => $data->id
+            ]);
+        }
+
+        if ($proceso) {
+
+            $result = [
+                "STATUS" => true,
+                "messaje" => "Producto actualizado correctamente"
+            ];
+
+        } else {
+
+            $result = [
+                "STATUS" => false,
+                "messaje" => "Ocurrió un error en la actualización"
+            ];
+        }
+
+    } catch (PDOException $e) {
+
+        $result = [
+            "STATUS" => false,
+            "messaje" => $e->getMessage()
+        ];
+    }
+
+    $response->getBody()->write(json_encode($result));
+
+    return $response
+        ->withHeader('Content-Type', 'application/json')
+        ->withStatus(200);
+});
+
+$app->post('/categoria', function ($request, $response) use ($pdo) {
+
+    header("Content-Type: application/json; charset=utf-8");
+
+    $body = $request->getBody()->getContents();
+
+    $j = json_decode($body, true);
+
+    $data = json_decode($j['json']);
+
+    try {
+
+        $nombre = (is_array($data->nombre))
+            ? array_shift($data->nombre)
+            : $data->nombre;
+
+        $sql = "INSERT INTO categorias (nombre,usuario) VALUES (:nombre,'admin')";
+
+        $stmt = $pdo->prepare($sql);
+
+        $proceso = $stmt->execute([
+            ':nombre' => $nombre
+        ]);
+
+        if ($proceso) {
+
+            $result = [
+                "STATUS" => true,
+                "messaje" => "Categoria creada correctamente"
+            ];
+
+        } else {
+
+            $result = [
+                "STATUS" => false,
+                "messaje" => "Ocurrió un error en la creación"
+            ];
+        }
+
+    } catch (PDOException $e) {
+
+        $result = [
+            "STATUS" => false,
+            "messaje" => $e->getMessage()
+        ];
+    }
+
+    $response->getBody()->write(json_encode($result));
+
+    return $response
+        ->withHeader('Content-Type', 'application/json')
+        ->withStatus(200);
+});
+
+
 
 $app->post('/producto', function (Request $request, Response $response) use ($pdo) {
 
@@ -2107,7 +2696,27 @@ $app->post('/producto', function (Request $request, Response $response) use ($pd
             $archivo = base64_decode($data->imagen);
             $filePath = $_SERVER['DOCUMENT_ROOT'] . "/erp-api/upload/" . $data->nombre_imagen;
 
-            file_put_contents($filePath, $archivo);
+            // Crear imagen desde el contenido binario
+            $image = imagecreatefromstring($archivo);
+
+            if ($image !== false) {
+
+                $quality = 90;
+
+                do {
+                    ob_start();
+                    imagejpeg($image, null, $quality);
+                    $compressedData = ob_get_clean();
+
+                    $sizeKB = strlen($compressedData) / 1024;
+                    $quality -= 5;
+
+                } while ($sizeKB > 100 && $quality > 10);
+
+                file_put_contents($filePath, $compressedData);
+
+                imagedestroy($image);
+            }
         }
 
         // 🔥 Transacción (CLAVE)
@@ -2115,16 +2724,10 @@ $app->post('/producto', function (Request $request, Response $response) use ($pd
 
         // ---- Insert producto ----
         $stmt = $pdo->prepare("
-<<<<<<< HEAD
             INSERT INTO productos
-            (id_categoria, id_subcategoria, id_sub_sub_categoria, codigo, codigobarras, nombre, unidad, precio, imagen)
+            (id_categoria, id_subcategoria, id_sub_sub_categoria, codigo, codigobarras, nombre, unidad, precio,precio_compra, imagen)
             VALUES
-=======
-            INSERT INTO productos 
-            (id_categoria, id_subcategoria, id_sub_sub_categoria, codigo, codigobarras, nombre, unidad, precio, imagen)
-            VALUES 
->>>>>>> 004f6d84d0cb8ae60075fc98a0329cdc143f528c
-            (:categoria, :subcategoria, :familia, :codigo, :codigobarras, :nombre, :unidad, :precio, :imagen)
+            (:categoria, :subcategoria, :familia, :codigo, :codigobarras, :nombre, :unidad, :precio,:precio_compra, :imagen)
         ");
 
         $stmt->execute([
@@ -2136,6 +2739,7 @@ $app->post('/producto', function (Request $request, Response $response) use ($pd
             'nombre'        => $data->nombre,
             'unidad'        => $data->unidad,
             'precio'        => $data->precio,
+            'precio_compra' => $data->precio_compra,
             'imagen'        => $data->nombre_imagen ?? null
         ]);
 
@@ -2153,11 +2757,7 @@ $app->post('/producto', function (Request $request, Response $response) use ($pd
 
         // ---- Movimientos iniciales ----
         $stmtMov = $pdo->prepare("
-<<<<<<< HEAD
             INSERT INTO movimiento_articulos
-=======
-            INSERT INTO movimiento_articulos 
->>>>>>> 004f6d84d0cb8ae60075fc98a0329cdc143f528c
             (codigo_prod, tipo_movimiento, cantidad_ingreso, cantidad_salida, cantidad_acumulada, precio, comentario, id_sucursal, usuario)
             VALUES (:producto_id, 'Ingreso', 0, 0, 0, 0, 'carga inicial', :sucursal, :usuario)
         ");
@@ -2189,7 +2789,68 @@ $app->post('/producto', function (Request $request, Response $response) use ($pd
     return $response->withHeader('Content-Type', 'application/json');
 });
 
-<<<<<<< HEAD
+
+$app->put('/cliente', function ($request, $response) use ($pdo) {
+
+    header("Content-Type: application/json; charset=utf-8");
+
+    $body = $request->getBody()->getContents();
+
+    $j = json_decode($body, true);
+
+    $data = json_decode($j['json']);
+
+    try {
+
+        $sql = "UPDATE clientes
+                SET
+                    nombre = :nombre,
+                    direccion = :direccion,
+                    telefono = :telefono,
+                    num_documento = :num_documento,
+                    email = :email,
+                    departamento = :departamento,
+                    provincia = :provincia,
+                    distrito = :distrito
+                WHERE id = :id";
+
+        $stmt = $pdo->prepare($sql);
+
+        $stmt->execute([
+            ':nombre' => $data->nombre,
+            ':direccion' => $data->direccion,
+            ':telefono' => $data->telefono,
+            ':num_documento' => $data->num_documento,
+            ':email' => $data->email,
+            ':departamento' => $data->departamento,
+            ':provincia' => $data->provincia,
+            ':distrito' => $data->distrito,
+            ':id' => $data->id
+        ]);
+
+        $result = [
+            "STATUS" => true,
+            "messaje" => "Cliente actualizado correctamente"
+        ];
+
+    } catch (PDOException $e) {
+
+        $result = [
+            "STATUS" => false,
+            "messaje" => $e->getMessage()
+        ];
+    }
+
+    $response->getBody()->write(json_encode($result));
+
+    return $response
+        ->withHeader('Content-Type', 'application/json')
+        ->withStatus(200);
+});
+
+
+
+
 $app->post('/cliente', function (Request $request, Response $response) use ($pdo) {
 
     $body = $request->getBody()->getContents();
@@ -2219,10 +2880,10 @@ $app->post('/cliente', function (Request $request, Response $response) use ($pdo
             ':nombre' => $data->nombre,
             ':telefono' => $data->telefono,
             ':direccion' => $data->direccion,
-            ':email' => $data->email,
-            ':departamento' => $data->departamento,
-            ':provincia' => $data->provincia,
-            ':distrito' => $data->distrito
+            ':email' => isset($data->email) ?$data->email :'',
+            ':departamento' => isset($data->departamento) ?$data->departamento :'',
+            ':provincia' => isset($data->provincia) ? $data->provincia :'',
+            ':distrito' =>  isset($data->distrito) ?$data->distrito :'',
         ]);
 
         $result = [
@@ -2243,6 +2904,725 @@ $app->post('/cliente', function (Request $request, Response $response) use ($pdo
     return $response->withHeader('Content-Type', 'application/json');
 });
 
-=======
->>>>>>> 004f6d84d0cb8ae60075fc98a0329cdc143f528c
+$app->post('/anular', function (Request $request, Response $response) use ($pdo) {
+
+    $body = $request->getBody()->getContents();
+    $j = json_decode($body, true);
+    $data = json_decode($j['json'], true);
+
+    try {
+
+        $id = $data['datos']['id'];
+        $estado = $data['datos']['estado'];
+        $id_sucursal = $data['datos']['id_sucursal'];
+
+        if ($estado != 'Anulado') {
+
+            // 🔥 1. Anular venta
+            $stmt = $pdo->prepare("UPDATE ventas SET estado = 2 WHERE id = :id");
+            $stmt->execute([':id' => $id]);
+
+            // 🔥 2. Obtener detalle
+            $stmt = $pdo->prepare("SELECT * FROM venta_detalle WHERE id_venta = :id");
+            $stmt->execute([':id' => $id]);
+
+            $prods = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+            foreach ($prods as $fila) {
+
+                // 🔥 3. Movimiento artículos
+                $stmt = $pdo->prepare("
+                    INSERT INTO movimiento_articulos
+                    (codigo_prod, id_venta, tipo_movimiento, id_almacen, cantidad_ingreso, precio, comentario, id_sucursal, usuario)
+                    VALUES (:codigo_prod, :id_venta, 'Ingreso', :id_almacen, :cantidad, :precio, 'Venta anulada', :id_sucursal, 'admin')
+                ");
+
+                $stmt->execute([
+                    ':codigo_prod' => $fila['id_producto'],
+                    ':id_venta' => $fila['id_venta'],
+                    ':id_almacen' => $fila['id_inventario'],
+                    ':cantidad' => ($fila['cantidad'] - $fila['pendiente']),
+                    ':precio' => $fila['precio'],
+                    ':id_sucursal' => $id_sucursal
+                ]);
+
+                // 🔥 4. Actualizar inventario
+                $stmt = $pdo->prepare("
+                    UPDATE inventario
+                    SET cantidad = cantidad + :cantidad, fecha_actualizacion = NOW()
+                    WHERE producto_id = :producto_id AND id_almacen = :almacen
+                ");
+
+                $stmt->execute([
+                    ':cantidad' => $fila['cantidad'],
+                    ':producto_id' => $fila['id_producto'],
+                    ':almacen' => $id_sucursal
+                ]);
+            }
+
+            $result = [
+                "STATUS" => true,
+                "messaje" => "Venta nro $id fue anulada correctamente"
+            ];
+
+        } else {
+
+            $result = [
+                "STATUS" => true,
+                "messaje" => "La venta $id ya está anulada"
+            ];
+        }
+
+    } catch (Exception $e) {
+
+        $result = [
+            "STATUS" => false,
+            "message" => $e->getMessage()
+        ];
+    }
+
+    $response->getBody()->write(json_encode($result));
+
+    return $response->withHeader('Content-Type', 'application/json');
+});
+
+
+$app->post('/del_proveedor', function (Request $request, Response $response) use ($pdo) {
+
+    $body = $request->getBody()->getContents();
+    $j = json_decode($body, true);
+    $data = json_decode($j['json']);
+
+    try {
+        $stmt = $pdo->prepare("DELETE FROM proveedores WHERE id = :id");
+        $stmt->bindParam(':id', $data->proveedor->id, PDO::PARAM_INT);
+
+        if ($stmt->execute()) {
+            $result = [
+                "STATUS" => true,
+                "message" => "Proveedor eliminado correctamente"
+            ];
+        } else {
+            $result = [
+                "STATUS" => false,
+                "message" => "Error al eliminar el proveedor"
+            ];
+        }
+
+    } catch (PDOException $e) {
+        $result = [
+            "STATUS" => false,
+            "message" => "Error: " . $e->getMessage()
+        ];
+    }
+
+    $response->getBody()->write(json_encode($result));
+    return $response->withHeader('Content-Type', 'application/json');
+
+});
+
+
+$app->post('/del_cliente', function (Request $request, Response $response) use ($pdo) {
+
+    $body = $request->getBody()->getContents();
+    $j = json_decode($body, true);
+    $data = json_decode($j['json']);
+
+
+    try {
+        $stmt = $pdo->prepare("DELETE FROM clientes WHERE id = :id");
+        $stmt->bindParam(':id', $data->cliente->id, PDO::PARAM_INT);
+
+        if ($stmt->execute()) {
+            $result = [
+                "STATUS" => true,
+                "messaje" => "Cliente eliminado correctamente"
+            ];
+        } else {
+            $result = [
+                "STATUS" => false,
+                "messaje" => "Error al eliminar el proveedor"
+            ];
+        }
+
+    } catch (PDOException $e) {
+        $result = [
+            "STATUS" => false,
+            "messaje" => "Error: " . $e->getMessage()
+        ];
+    }
+
+    $response->getBody()->write(json_encode($result));
+    return $response->withHeader('Content-Type', 'application/json');
+
+});
+
+$app->post('/proveedor', function (Request $request, Response $response) use ($pdo) {
+
+    $body = $request->getBody()->getContents();
+    $j = json_decode($body, true);
+    $data = json_decode($j['json']);
+
+    // Normalizar datos (por si vienen como array o string)
+    $getValue = function($field) {
+        return is_array($field) ? array_shift($field) : $field;
+    };
+
+    $razon_social = $getValue($data->razon_social);
+    $direccion    = $getValue($data->direccion);
+    $ruc          = $getValue($data->num_documento);
+    $departamento = $getValue($data->departamento);
+    $provincia    = $getValue($data->provincia);
+    $distrito     = $getValue($data->distrito);
+
+    try {
+
+        $stmt = $pdo->prepare("
+            INSERT INTO proveedores
+            (razon_social, direccion, num_documento, departamento, provincia, distrito)
+            VALUES
+            (:razon_social, :direccion, :ruc, :departamento, :provincia, :distrito)
+        ");
+
+        $stmt->execute([
+            ':razon_social' => $razon_social,
+            ':direccion'    => $direccion,
+            ':ruc'          => $ruc,
+            ':departamento' => $departamento,
+            ':provincia'    => $provincia,
+            ':distrito'     => $distrito
+        ]);
+
+        $result = [
+            "STATUS" => true,
+            "message" => "Proveedor agregado correctamente"
+        ];
+
+    } catch (PDOException $e) {
+
+        $result = [
+            "STATUS" => false,
+            "message" => $e->getMessage()
+        ];
+    }
+
+    $response->getBody()->write(json_encode($result));
+    return $response->withHeader('Content-Type', 'application/json');
+
+});
+
+
+$app->post('/actualizar-precios', function ($request, $response) use ($pdo) {
+
+    $data = json_decode($request->getBody()->getContents());
+
+    $sql = "UPDATE productos
+            SET precio = :precio
+            WHERE codigo = :codigo";
+
+    $stmt = $pdo->prepare($sql);
+
+    foreach ($data->productos as $producto) {
+
+        $stmt->execute([
+            ':precio' => $producto->PRECIO,
+            ':codigo' => $producto->CODIGO
+        ]);
+    }
+
+    $response->getBody()->write(json_encode([
+        'success' => true
+    ]));
+
+    return $response
+        ->withHeader('Content-Type', 'application/json');
+});
+
+$app->get('/articulos/{criterio}', function (Request $request, Response $response, $args) use ($pdo) {
+
+    $criterio = $args['criterio'];
+
+    try {
+
+        $stmt = $pdo->prepare("
+            SELECT *
+            FROM productos
+            WHERE nombre LIKE :criterio
+               OR codigo LIKE :criterio
+        ");
+
+        $like = "%{$criterio}%";
+
+        $stmt->execute([
+            'criterio' => $like
+        ]);
+
+        $prods = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $respuesta = json_encode($prods);
+
+    } catch (PDOException $e) {
+
+        $respuesta = json_encode([
+            "status" => false,
+            "message" => $e->getMessage()
+        ]);
+    }
+
+    $response->getBody()->write($respuesta);
+
+    return $response
+        ->withHeader('Content-Type', 'application/json')
+        ->withStatus(200);
+});
+
+
+
+$app->post('/agregar-inventario', function (Request $request, Response $response) use ($pdo) {
+
+    $body = $request->getBody()->getContents();
+    $j = json_decode($body, true);
+    $data = json_decode($j['json']);
+
+
+
+    $cantidad_acumulada = 0;
+
+    $stmt = $pdo->prepare("
+        SELECT *
+        FROM movimiento_articulos
+        WHERE codigo_prod = :producto
+        AND id_sucursal = :sucursal
+        ORDER BY id DESC
+        LIMIT 1
+    ");
+
+    $stmt->execute([
+        ':producto' => $data->id_producto,
+        ':sucursal' => $data->id_sucursal
+    ]);
+
+    $inv = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$inv) {
+        $inv = [
+            'precio' => 0,
+            'cantidad_acumulada' => 0,
+            'cantidad_ingreso' => 0,
+            'total' => 0,
+            'promedio' => 0
+        ];
+    }
+
+    if ($data->operacion === 'Ingreso') {
+
+        if ($inv['precio'] == 0 || $inv['cantidad_acumulada'] == 0) {
+
+            $promedio = ($inv['cantidad_acumulada'] == 0)
+                ? $data->precio
+                : ($data->cantidad / $data->precio);
+
+            $sql = "
+                INSERT INTO movimiento_articulos
+                (
+                    codigo_prod,
+                    tipo_movimiento,
+                    id_almacen,
+                    comentario,
+                    cantidad_movimiento,
+                    cantidad_ingreso,
+                    cantidad_acumulada,
+                    precio,
+                    promedio,
+                    total,
+                    id_sucursal,
+                    estado,
+                    usuario
+                )
+                VALUES
+                (
+                    :codigo_prod,
+                    :tipo_movimiento,
+                    :id_almacen,
+                    :comentario,
+                    :cantidad_movimiento,
+                    :cantidad_ingreso,
+                    :cantidad_acumulada,
+                    :precio,
+                    :promedio,
+                    :total,
+                    :id_sucursal,
+                    :estado,
+                    :usuario
+                )
+            ";
+
+            $params = [
+                ':codigo_prod' => $data->id_producto,
+                ':tipo_movimiento' => $data->operacion,
+                ':id_almacen' => $data->id_sucursal,
+                ':comentario' => 'Modificación manual -'.$data->comentario,
+                ':cantidad_movimiento' => $data->cantidad,
+                ':cantidad_ingreso' => $data->cantidad,
+                ':cantidad_acumulada' => $data->cantidad,
+                ':precio' => $data->precio,
+                ':promedio' => $promedio,
+                ':total' => $data->cantidad * $data->precio,
+                ':estado'=>'activo',
+                ':id_sucursal' => $data->id_sucursal,
+                ':usuario' => $data->usuario
+            ];
+
+        } else {
+
+            $cantidad_ingreso = $data->cantidad + floatval($inv['cantidad_ingreso']);
+            $total = round(
+                ($data->cantidad * $data->precio) + floatval($inv['total']),
+                2
+            );
+
+            if (floatval($inv['cantidad_acumulada']) <= 0) {
+
+                $promedio =
+                    (
+                        floatval($inv['total']) +
+                        ($data->cantidad * $data->precio)
+                    )
+                    /
+                    (
+                        floatval($inv['cantidad_acumulada']) +
+                        $data->cantidad
+                    );
+
+                $cantidad_acumulada =
+                    floatval($inv['cantidad_acumulada']) +
+                    $data->cantidad;
+
+            } else {
+
+                $promedio =
+                    (
+                        floatval($inv['total']) +
+                        ($data->cantidad * $data->precio)
+                    )
+                    /
+                    (
+                        floatval($inv['cantidad_acumulada']) +
+                        $data->cantidad
+                    );
+
+                $cantidad_ingreso = $data->cantidad;
+
+                $cantidad_acumulada =
+                    floatval($inv['cantidad_acumulada']) +
+                    $data->cantidad;
+            }
+
+            $sql = "
+                INSERT INTO movimiento_articulos
+                (
+                    codigo_prod,
+                    tipo_movimiento,
+                    id_almacen,
+                    comentario,
+                    cantidad_movimiento,
+                    cantidad_ingreso,
+                    cantidad_acumulada,
+                    precio,
+                    promedio,
+                    total,
+                    id_sucursal,
+                    usuario
+                )
+                VALUES
+                (
+                    :codigo_prod,
+                    :tipo_movimiento,
+                    :id_almacen,
+                    :comentario,
+                    :cantidad_movimiento,
+                    :cantidad_ingreso,
+                    :cantidad_acumulada,
+                    :precio,
+                    :promedio,
+                    :total,
+                    :id_sucursal,
+                    :usuario
+                )
+            ";
+
+            $params = [
+                ':codigo_prod' => $data->id_producto,
+                ':tipo_movimiento' => $data->operacion,
+                ':id_almacen' => $data->id_sucursal,
+                ':comentario' => 'Modificación manual -'.$data->comentario,
+                ':cantidad_movimiento' => $data->cantidad,
+                ':cantidad_ingreso' => $cantidad_ingreso,
+                ':cantidad_acumulada' => $cantidad_acumulada,
+                ':precio' => $data->precio,
+                ':promedio' => $promedio,
+                ':total' => $total,
+                ':id_sucursal' => $data->id_sucursal,
+                ':usuario' => $data->usuario
+            ];
+        }
+
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+
+        $stmt = $pdo->prepare("
+            UPDATE inventario
+            SET cantidad = cantidad + :cantidad,
+                fecha_actualizacion = NOW()
+            WHERE producto_id = :producto
+            AND id_almacen = :almacen
+        ");
+
+        $stmt->execute([
+            ':cantidad' => $data->cantidad,
+            ':producto' => $data->id_producto,
+            ':almacen' => $data->id_sucursal
+        ]);
+    }
+
+    if ($data->operacion === 'Salida') {
+
+        if ($inv["precio"] != "0.00") {
+
+            $total = number_format(
+                $inv["total"] - ($data->cantidad * $inv["promedio"]),
+                2,
+                '.',
+                ''
+            );
+
+            $cantidadAcumulada = $inv["cantidad_acumulada"] - $data->cantidad;
+
+            try {
+
+                $pdo->beginTransaction();
+
+                // Actualizar inventario
+                $sqlInventario = "
+                    UPDATE inventario
+                    SET
+                        cantidad = cantidad - :cantidad,
+                        fecha_actualizacion = NOW()
+                    WHERE
+                        producto_id = :producto_id
+                    AND id_almacen = :almacen
+                ";
+
+                $stmtInventario = $pdo->prepare($sqlInventario);
+
+                $stmtInventario->execute([
+                    ':cantidad'    => $data->cantidad,
+                    ':producto_id' => $data->id_producto,
+                    ':almacen'     => $data->id_sucursal
+                ]);
+
+                // Registrar movimiento
+                $sqlMovimiento = "
+                    INSERT INTO movimiento_articulos
+                    (
+                        codigo_prod,
+                        tipo_movimiento,
+                        id_almacen,
+                        comentario,
+                        cantidad_movimiento,
+                        cantidad_salida,
+                        cantidad_acumulada,
+                        precio,
+                        promedio,
+                        total,
+                        id_sucursal,
+                        usuario
+                    )
+                    VALUES
+                    (
+                        :codigo_prod,
+                        :tipo_movimiento,
+                        :id_almacen,
+                        :comentario,
+                        :cantidad_movimiento,
+                        :cantidad_salida,
+                        :cantidad_acumulada,
+                        :precio,
+                        :promedio,
+                        :total,
+                        :id_sucursal,
+                        :usuario
+                    )
+                ";
+
+                $stmtMovimiento = $pdo->prepare($sqlMovimiento);
+
+                $stmtMovimiento->execute([
+                    ':codigo_prod'         => $data->id_producto,
+                    ':tipo_movimiento'     => $data->operacion,
+                    ':id_almacen'          => $data->id_sucursal,
+                    ':comentario'          => 'Modificación manual -'.$data->comentario,
+                    ':cantidad_movimiento' => $data->cantidad,
+                    ':cantidad_salida'     => -$data->cantidad,
+                    ':cantidad_acumulada'  => $cantidadAcumulada,
+                    ':precio'              => $inv["promedio"],
+                    ':promedio'            => $inv["promedio"],
+                    ':total'               => $total,
+                    ':id_sucursal'         => $data->id_sucursal,
+                    ':usuario'             => $data->usuario
+                ]);
+
+                $pdo->commit();
+
+            } catch (PDOException $e) {
+
+                $pdo->rollBack();
+
+                throw $e;
+
+            }
+
+        }
+
+    }
+
+
+    $result = [
+        'STATUS' => true,
+        'messaje' => 'Inventario registrado correctamente'
+    ];
+
+    $response->getBody()->write(json_encode($result));
+
+    return $response
+        ->withHeader('Content-Type', 'application/json');
+});
+
+
+$app->post('/movimiento-kardex',function(Request $request,Response $response) use ($pdo){
+
+    $body = $request->getBody()->getContents();
+    $j = json_decode($body, true);
+    $data = json_decode($j['json']);
+    $detalle = json_decode($j['detalle']);
+ // 🔹 Obtener ID (mejor si tu SP lo devuelve)
+//$ultimo_id = $pdo->query("SELECT MAX(id) AS ultimo_id FROM movimiento_articulos")->fetch();
+// movimiento
+$tipo='';
+$cantidad=0;
+if($detalle->tipo_movimiento=='Salida'){
+    $tipo='Ingreso';
+     $cantidad = abs($detalle->cantidad_movimiento);
+     $stmtInv = $pdo->prepare("
+     UPDATE inventario  SET cantidad = cantidad + (cantidad + ?),
+     fecha_actualizacion = NOW()
+     WHERE producto_id = ?  AND id_almacen = ?;
+     ");
+     $stmtInv->execute([
+         $cantidad,
+         $data,
+         $detalle->id_almacen
+     ]);
+     $stmtInv->closeCursor();
+
+     $sqlVenta=$pdo->prepare("UPDATE venta_detalle set pendiente=? WHERE id_venta=? and id_producto=?");
+     $sqlVenta->execute([
+        $cantidad,
+        $detalle->id_venta,
+        $data
+    ]);
+
+     $sqlVenta->closeCursor();
+
+}else{
+    $tipo='Salida';
+     $cantidad = abs($detalle->cantidad_movimiento);
+     $stmtInv = $pdo->prepare("
+     UPDATE inventario  SET cantidad = - (cantidad - ?),
+     fecha_actualizacion = NOW()
+     WHERE producto_id = ?  AND id_almacen = ?;
+     ");
+
+     $stmtInv->execute([
+         $cantidad,
+         $data,
+         $detalle->id_almacen
+     ]);
+     $stmtInv->closeCursor();
+
+     $sqlCompra=$pdo->prepare("UPDATE compra_detalle set pendiente=? WHERE id_compra=? and id_producto=?");
+     $sqlCompra->execute([
+        $cantidad,
+        $detalle->id_compra,
+        $data
+    ]);
+
+     $sqlCompra->closeCursor();
+
+}
+
+$stmtMov = $pdo->prepare("CALL p_registrar_movimiento(?,?,?,?,?,?,?,?)");
+$stmtMov->execute([
+    $data,
+    00000000,
+    $tipo,
+    $cantidad,
+    $detalle->precio,
+    'admin',
+    $detalle->id_almacen,
+    'Modificación manual'
+]);
+//var_dump( $data,$ultimo_id->ultimo_id,$detalle->tipo_movimiento,$detalle->cantidad_movimiento,$detalle->precio,$detalle->id_almacen);
+ //exit;
+$stmtMov->closeCursor();
+
+
+
+$smtEstado=$pdo->prepare("UPDATE movimiento_articulos SET estado=? where id=?");
+$smtEstado->execute(['anulado',$detalle->id]);
+$smtEstado->closeCursor();
+
+$result = [
+    'STATUS' => true,
+    'messaje' => 'Inventario actualizado correctamente'
+];
+
+$response->getBody()->write(json_encode($result));
+
+return $response
+    ->withHeader('Content-Type', 'application/json');
+
+
+});
+
+
+$app->get('/numeroletras/{cantidad}', function (
+    Request $request,
+    Response $response,
+    array $args
+) {
+
+    $cantidad = $args['cantidad'];
+
+    $json = @file_get_contents("http://nal.azurewebsites.net/api/Nal?num=" . urlencode($cantidad));
+
+    if ($json === false) {
+        $response->getBody()->write(json_encode([
+            'error' => 'No se pudo obtener la conversión a letras.'
+        ]));
+        return $response
+            ->withHeader('Content-Type', 'application/json; charset=utf-8')
+            ->withStatus(500);
+    }
+
+    $data = json_decode($json, true);
+
+    $resultado = $data['letras'] ?? '';
+
+    $response->getBody()->write(json_encode($resultado));
+
+    return $response->withHeader('Content-Type', 'application/json; charset=utf-8');
+});
+
+
 $app->run();

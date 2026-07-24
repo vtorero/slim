@@ -16,7 +16,7 @@ use Slim\Factory\AppFactory;
 
 $app = AppFactory::create();
 /*Produccion
-$dsn = "mysql:host=lh-cjm.com;dbname=aprendea_erp;port=3306;charset=utf8";
+
 $usuario="aprendea_erp";
 $clave="erp2023*";
 */

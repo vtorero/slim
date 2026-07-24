@@ -3625,4 +3625,61 @@ $app->get('/numeroletras/{cantidad}', function (
 });
 
 
+$app->post('/consulta-cuenta', function (Request $request, Response $response) use ($pdo) {
+    $body = $request->getBody()->getContents();
+
+
+    $j = json_decode($body, true);
+
+ $params = [
+    ':cuenta' => $j['cuenta']
+   ];
+    // 🔹 Función helper
+    $run = function($sql, $params) use ($pdo) {
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+        return $stmt->fetchAll();
+    };
+
+
+try{
+ $sql_ingreso = $run("SELECT SUM(valor_total) total FROM ventas v left join venta_pagos vp on v.id=vp.id_venta where v.estado=1 and vp.cuentaPago=:cuenta",$params);
+
+ $sql_egreso=$run("SELECT SUM(cp.monto) total FROM compras c left join compra_pagos cp on c.id=cp.id_compra where c.estado=1 and
+ cp.cuentaPago=:cuenta",$params);
+
+ $resp = [
+    "status"=>200,
+    "ingresos"=>$sql_ingreso,
+    "egresos"=>$sql_egreso,
+ ];
+
+
+
+$respuesta = json_encode($resp);
+
+} catch (PDOException $e) {
+
+    $respuesta = json_encode([
+        "status" => false,
+        "message" => $e->getMessage()
+    ]);
+}
+
+$response->getBody()->write($respuesta);
+
+return $response->withHeader('Content-Type','application/json');
+
+});
+
+
+$app->post('/guardamovimiento', function (Request $request, Response $response) use ($pdo) {
+    $body = $request->getBody()->getContents();
+    $j = json_decode($body, true);
+
+    var_dump($j);
+    exit;
+
+});
+
 $app->run();

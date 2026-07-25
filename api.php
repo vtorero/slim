@@ -3780,5 +3780,46 @@ $app->get('/movimiento_caja/{id}', function (Request $request, Response $respons
 });
 
 
+$app->post('/consulta-movimientos', function (Request $request, Response $response) use ($pdo) {
+
+    $data = json_decode($request->getBody()->getContents(), true);
+
+    $arraymeses = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    $arraynros  = ['01','02','03','04','05','06','07','08','09','10','11','12'];
+
+    $mes1 = substr($data['ini'], 3,3);
+    $mes2 = substr($data['fin'], 3,3);
+    $dia1 = substr($data['ini'], 0,2);
+    $dia2 = substr($data['fin'], 0,2);
+    $ano1 = substr($data['ini'], 7,4);
+    $ano2 = substr($data['fin'], 7,4);
+
+    $fmes1 = str_replace($arraymeses,$arraynros,$mes1);
+    $fmes2 = str_replace($arraymeses,$arraynros,$mes2);
+
+    $ini = "$ano1-$fmes1-$dia1";
+    $fin = "$ano2-$fmes2-$dia2";
+
+
+        $sql = "SELECT id, cuenta, tipo,concepto,monto,usuario,fecha_registro FROM movimiento_caja WHERE
+        cuenta=:cuenta and fecha_registro BETWEEN :ini and :fin";
+        $stmt = $pdo->prepare($sql);
+
+        $stmt->execute([
+        ':ini' => "$ini 00:00:00",
+        ':fin' => "$fin 23:59:59",
+        ':cuenta'=>$data['cuenta']
+        ]);
+
+        $mov = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $response->getBody()->write(json_encode($mov));
+
+
+        return $response
+            ->withHeader('Content-Type', 'application/json')
+            ->withStatus(200);
+
+});
+
 
 $app->run();

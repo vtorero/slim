@@ -1438,6 +1438,47 @@ $app->get('/vendedores', function (Request $request, Response $response) use ($p
         ->withStatus(200);
 });
 
+
+
+$app->post('/permisos', function (Request $request, Response $response) use ($pdo) {
+
+    $body = $request->getBody()->getContents();
+    $j = json_decode($body, true);
+    $data = json_decode($j['json']);
+
+    try {
+
+        $sql = "CALL p_permisos(:id_usuario, :id_sucursal, :opcion, :usuario)";
+
+        $stmt = $pdo->prepare($sql);
+
+        $stmt->execute([
+            ':id_usuario'  => $data->id_usuario,
+            ':id_sucursal' => $data->id_sucursal,
+            ':opcion'      => 1,
+            ':usuario'     => $data->usuario
+        ]);
+
+        $result = [
+            "STATUS"  => true,
+            "messaje" => "Permiso registrado correctamente"
+        ];
+
+    } catch (PDOException $e) {
+
+        $result = [
+            "STATUS"  => false,
+            "messaje" => $e->getMessage()
+        ];
+    }
+
+    $response->getBody()->write(json_encode($result));
+    return $response
+        ->withHeader('Content-Type', 'application/json')
+        ->withStatus(200);
+});
+
+
 $app->get('/permisos', function (Request $request, Response $response) use ($pdo) {
 
     $sql = "SELECT
@@ -3675,11 +3716,69 @@ return $response->withHeader('Content-Type','application/json');
 
 $app->post('/guardamovimiento', function (Request $request, Response $response) use ($pdo) {
     $body = $request->getBody()->getContents();
-    $j = json_decode($body, true);
+    $data = json_decode($body, true);
 
-    var_dump($j);
-    exit;
+
+    try {
+        $sql = "INSERT INTO movimiento_caja (cuenta, tipo,concepto,monto,usuario)
+                VALUES (:cuenta,:tipo,:concepto,:monto,:usuario)";
+
+        $stmt = $pdo->prepare($sql);
+
+        $proceso = $stmt->execute([
+            ':cuenta' => $data['cuenta'],
+            ':tipo'=> $data['tipo'],
+            ':concepto'=> $data['concepto'],
+            ':monto'=> $data['monto'],
+            ':usuario'=> $data['usuario']
+        ]);
+
+        if ($proceso) {
+            $result = [
+                "STATUS"  => true,
+                "messaje" => "Movimiento generado correctamente"
+            ];
+        } else {
+            $result = [
+                "STATUS"  => false,
+                "messaje" => "Ocurrió un error en el movimiento"
+            ];
+        }
+
+    } catch (PDOException $e) {
+        $result = [
+            "STATUS"  => false,
+            "messaje" => $e->getMessage()
+        ];
+    }
+
+    $response->getBody()->write(json_encode($result));
+
+    return $response
+        ->withHeader('Content-Type', 'application/json')
+        ->withStatus(200);
+
 
 });
+
+
+$app->get('/movimiento_caja/{id}', function (Request $request, Response $response,$args) use ($pdo) {
+
+    $cuenta = $args['id'];
+    $sql = "SELECT id, fecha_registro,tipo,concepto,monto FROM movimiento_caja where cuenta=:cuenta ORDER BY id desc";
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute([
+        ':cuenta'    => $cuenta,
+    ]);
+
+    $mov = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $response->getBody()->write(json_encode($mov));
+
+    return $response
+        ->withHeader('Content-Type', 'application/json')
+        ->withStatus(200);
+});
+
+
 
 $app->run();

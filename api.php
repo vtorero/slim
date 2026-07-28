@@ -3717,9 +3717,14 @@ return $response->withHeader('Content-Type','application/json');
 $app->post('/guardamovimiento', function (Request $request, Response $response) use ($pdo) {
     $body = $request->getBody()->getContents();
     $data = json_decode($body, true);
-
+    $monto=0;
 
     try {
+        if($data['tipo']=='Ingreso'){
+        $monto=$data['monto'];
+        }else{
+        $monto=-$data['monto'];
+        }
         $sql = "INSERT INTO movimiento_caja (cuenta, tipo,concepto,monto,usuario)
                 VALUES (:cuenta,:tipo,:concepto,:monto,:usuario)";
 
@@ -3729,7 +3734,7 @@ $app->post('/guardamovimiento', function (Request $request, Response $response) 
             ':cuenta' => $data['cuenta'],
             ':tipo'=> $data['tipo'],
             ':concepto'=> $data['concepto'],
-            ':monto'=> $data['monto'],
+            ':monto'=> $monto,
             ':usuario'=> $data['usuario']
         ]);
 
@@ -3802,7 +3807,7 @@ $app->post('/consulta-movimientos', function (Request $request, Response $respon
 
 
         $sql = "SELECT id, cuenta, tipo,concepto,monto,usuario,fecha_registro FROM movimiento_caja WHERE
-        cuenta=:cuenta and fecha_registro BETWEEN :ini and :fin";
+        cuenta=:cuenta and fecha_registro BETWEEN :ini and :fin order by id desc";
         $stmt = $pdo->prepare($sql);
 
         $stmt->execute([

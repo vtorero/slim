@@ -3684,10 +3684,17 @@ $app->post('/consulta-cuenta', function (Request $request, Response $response) u
 
 
 try{
- $sql_ingreso = $run("SELECT SUM(valor_total) total FROM ventas v left join venta_pagos vp on v.id=vp.id_venta where v.estado=1 and vp.cuentaPago=:cuenta",$params);
+    $sql_ingreso = $run("SELECT sum(total) as total from (
+        SELECT SUM(valor_total) total FROM ventas v left join venta_pagos vp on v.id=vp.id_venta where v.estado=1 and vp.cuentaPago=:cuenta
+        union all
+        SELECT SUM(monto) total FROM movimiento_caja  where tipo='Ingreso' and cuenta=:cuenta ) AS movimientos;",$params);
 
- $sql_egreso=$run("SELECT SUM(cp.monto) total FROM compras c left join compra_pagos cp on c.id=cp.id_compra where c.estado=1 and
- cp.cuentaPago=:cuenta",$params);
+         $sql_egreso=$run("SELECT sum(total) as total from (
+         SELECT SUM(cp.monto) total FROM compras c left join compra_pagos cp on c.id=cp.id_compra where c.estado=1 and
+         cp.cuentaPago=:cuenta
+         union all
+        SELECT SUM(monto) total FROM movimiento_caja  where tipo='Egreso' and cuenta=:cuenta ) AS movimientos;
+         ",$params);
 
  $resp = [
     "status"=>200,

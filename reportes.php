@@ -81,13 +81,21 @@ $app->post('/reporte', function (Request $request, Response $response) use ($pdo
     };
 
     // 🔹 Consultas
-    $infoboleta = $run("SELECT SUM(valor_total) total FROM ventas WHERE estado=1 AND fecha_registro BETWEEN :ini1 AND :fin1", $params);
+    $infoboleta = $run("SELECT SUM(total) as total from(
+    SELECT SUM(valor_total) total FROM ventas WHERE estado=1 AND fecha_registro BETWEEN :ini1 AND :fin1
+    union all
+    SELECT SUM(monto) total FROM movimiento_caja  where tipo='Ingreso' and fecha_registro BETWEEN :ini1 AND :fin1) AS movimientos;
+    ", $params);
 
     $infopendiente = $run("SELECT SUM(monto_pendiente) pendiente FROM ventas WHERE estado=1 AND fecha_registro BETWEEN :ini1 AND :fin1", $params);
 
-    $infogasto = $run("SELECT TRUNCATE(SUM(cantidad*precio),2) gasto
+    $infogasto = $run("SELECT SUM(total) as gasto from (SELECT TRUNCATE(SUM(cantidad*precio),2) total
         FROM compras c JOIN compra_detalle d ON c.id=d.id_compra
-        WHERE c.fecha_registro BETWEEN :ini1 AND :fin1", $params);
+        WHERE c.fecha_registro BETWEEN :ini1 AND :fin1
+         union all
+    SELECT SUM(monto) total FROM movimiento_caja  where tipo='Egreso' and fecha_registro BETWEEN :ini1 AND :fin1) AS movimientos;
+
+        ", $params);
 
     $infoproducto = $run("SELECT p.nombre, COUNT(id_producto) total
         FROM ventas v

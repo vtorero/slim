@@ -1693,6 +1693,252 @@ $app->post('/venta', function (Request $request, Response $response) use ($pdo) 
     return $response->withHeader('Content-Type', 'application/json');
 });
 
+$app->put('/venta/{id}', function (Request $request, Response $response, array $args) use ($pdo) {
+
+    $idVenta = $args['id'];
+
+    $j = json_decode($request->getBody()->getContents(), true);
+
+    $data = json_decode($j['json']);
+    $detalle = json_decode($j['detalle']);
+
+    $pendiente = ($data->montopendiente < 0) ? 0 : $data->montopendiente;
+
+    try {
+
+        $pdo->beginTransaction();
+
+        //---------------------------------------------------
+        // DEVOLVER STOCK DEL DETALLE ANTERIOR
+        //---------------------------------------------------
+
+        $sql = "SELECT producto_id,cantidad,id_almacen
+                FROM venta_detalle
+                WHERE venta_id=?";
+
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute([$idVenta]);
+
+        $detalleAnterior = $stmt->fetchAll(PDO::FETCH_OBJ);
+
+        foreach ($detalleAnterior as $item){
+
+            $sqlInv = "
+                UPDATE inventario
+                SET cantidad = cantidad + ?,
+                    fecha_actualizacion = NOW()
+                WHERE producto_id = ?
+                AND id_almacen = ?
+            ";
+
+            $pdo->prepare($sqlInv)->execute([
+                $item->cantidad,
+                $item->producto_id,
+                $item->id_almacen
+            ]);
+        }
+
+        //---------------------------------------------------
+        // ELIMINAR MOVIMIENTOS
+        //---------------------------------------------------
+
+        $pdo->prepare("
+            DELETE FROM movimiento_articulos
+            WHERE documento='Venta'
+            AND documento_id=?
+        ")->execute([$idVenta]);
+
+        //---------------------------------------------------
+        // ELIMINAR DETALLE
+        //---------------------------------------------------
+
+        $pdo->prepare("
+            DELETE FROM venta_detalle
+            WHERE venta_id=?
+        ")->execute([$idVenta]);
+
+        //---------------------------------------------------
+        // ELIMINAR PAGOS
+        //---------------------------------------------------
+
+        $pdo->prepare("
+            DELETE FROM venta_pagos
+            WHERE venta_id=?
+        ")->execute([$idVenta]);
+
+        //---------------------------------------------------
+        // ACTUALIZAR CABECERA
+        //---------------------------------------------------
+
+        $sql = "
+
+        UPDATE ventas SET
+
+            vendedor=?,
+            cliente=?,
+            sucursal=?,
+            entrega=?,
+            tipo_documento=?,
+            subtotal=?,
+            total=?,
+            pendiente=?,
+            igv=?,
+            comentario=?,
+            usuario_modifica=?,
+            fecha_modifica=NOW()
+
+        WHERE id=?
+
+        ";
+
+        $pdo->prepare($sql)->execute([
+
+            $data->vendedor,
+            $data->cliente,
+            $data->sucursal,
+            $data->entrega,
+            $data->tipoDoc,
+            $data->neto,
+            $data->total,
+            $pendiente,
+            ($data->total-$data->neto),
+            $data->comentario,
+            $data->usuario,
+            $idVenta
+
+        ]);
+
+        //---------------------------------------------------
+        // REGISTRAR PAGOS
+        //---------------------------------------------------
+
+        $valor_total = $data->total;
+
+        foreach($data->pagos as $pago){
+
+            $valor_total -= $pago->montoPago;
+
+            if($valor_total < 0){
+
+                $pago->montoPago += $data->montopendiente;
+                $valor_total = 0;
+
+            }
+
+            $stmt = $pdo->prepare("CALL p_venta_pago(?,?,?,?,?,?,?)");
+
+            $stmt->execute([
+
+                $idVenta,
+                '',
+                $pago->numero,
+                $pago->cuentaPago,
+                $pago->montoPago,
+                (count($data->pagos)==1)?$pendiente:$valor_total,
+                $data->usuario
+
+            ]);
+
+            $stmt->closeCursor();
+
+        }
+
+        //---------------------------------------------------
+        // NUEVO DETALLE
+        //---------------------------------------------------
+
+        foreach($detalle as $item){
+
+            $stmt = $pdo->prepare("CALL p_venta_detalle(?,?,?,?,?,?,?,?,?,?)");
+
+            $stmt->execute([
+
+                $idVenta,
+                $item->id,
+                $item->id,
+                $item->codigo,
+                '',
+                $item->cantidad,
+                $item->pendiente,
+                $item->descuento,
+                $item->precio,
+                $data->usuario
+
+            ]);
+
+            $stmt->closeCursor();
+
+            //------------------------------------------------
+            // DESCONTAR INVENTARIO
+            //------------------------------------------------
+
+            $pdo->prepare("
+                UPDATE inventario
+                SET cantidad=cantidad-?,
+                    fecha_actualizacion=NOW()
+                WHERE producto_id=?
+                AND id_almacen=?
+            ")->execute([
+
+                $item->despacho,
+                $item->id,
+                $data->sucursal
+
+            ]);
+
+            //------------------------------------------------
+            // MOVIMIENTO
+            //------------------------------------------------
+
+            $stmtMov = $pdo->prepare("
+                CALL p_registrar_movimiento(
+                    ?,?,?,?,?,?,?,?
+                )
+            ");
+
+            $stmtMov->execute([
+
+                $item->id,
+                $idVenta,
+                'Salida',
+                $item->despacho,
+                $item->precio,
+                $data->usuario,
+                $data->sucursal,
+                'Actualización venta N° '.$idVenta
+
+            ]);
+
+            $stmtMov->closeCursor();
+
+        }
+
+        $pdo->commit();
+
+        $result=[
+            "STATUS"=>true,
+            "numero"=>$idVenta,
+            "messaje"=>"Venta actualizada correctamente."
+        ];
+
+    }catch(Exception $e){
+
+        $pdo->rollBack();
+
+        $result=[
+            "STATUS"=>false,
+            "messaje"=>$e->getMessage()
+        ];
+
+    }
+
+    $response->getBody()->write(json_encode($result));
+
+    return $response->withHeader('Content-Type','application/json');
+
+});
+
+
 $app->get('/venta/{id}', function (Request $request, Response $response, $args) use ($pdo) {
 
     $id = $args['id'];
@@ -2097,7 +2343,7 @@ $app->get('/buscarclientes/{criterio}', function (Request $request, Response $re
     try {
 
         $stmt = $pdo->prepare("
-            SELECT *
+            SELECT id,nombre,num_documento
             FROM aprendea_erp.clientes
             WHERE nombre LIKE :criterio
                OR num_documento LIKE :criterio
@@ -3830,6 +4076,39 @@ $app->post('/consulta-movimientos', function (Request $request, Response $respon
         return $response
             ->withHeader('Content-Type', 'application/json')
             ->withStatus(200);
+
+});
+
+
+$app->post('/anular-movimiento', function (Request $request, Response $response) use ($pdo) {
+    $data = json_decode($request->getBody()->getContents(), true);
+    $data = json_decode($data['json']);
+
+    try {
+        $stmt = $pdo->prepare("DELETE FROM movimiento_caja WHERE id = :id");
+        $stmt->bindParam(':id', $data->id, PDO::PARAM_INT);
+
+        if ($stmt->execute()) {
+            $result = [
+                "STATUS" => true,
+                "messaje" => "Movimiento eliminado correctamente"
+            ];
+        } else {
+            $result = [
+                "STATUS" => false,
+                "messaje" => "Error al eliminar el movimiento"
+            ];
+        }
+
+    } catch (PDOException $e) {
+        $result = [
+            "STATUS" => false,
+            "message" => "Error: " . $e->getMessage()
+        ];
+    }
+
+    $response->getBody()->write(json_encode($result));
+    return $response->withHeader('Content-Type', 'application/json');
 
 });
 

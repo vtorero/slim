@@ -1693,16 +1693,15 @@ $app->post('/venta', function (Request $request, Response $response) use ($pdo) 
     return $response->withHeader('Content-Type', 'application/json');
 });
 
-$app->put('/venta/{id}', function (Request $request, Response $response, array $args) use ($pdo) {
+$app->put('/venta', function (Request $request, Response $response, array $args) use ($pdo) {
 
-    $idVenta = $args['id'];
+    //$idVenta = $args['id'];
 
-    $j = json_decode($request->getBody()->getContents(), true);
+    $j = json_decode($request->getBody()->getContents());
+    $data = $j->venta;
+    $detalle = $j->pagos;
 
-    $data = json_decode($j['json']);
-    $detalle = json_decode($j['detalle']);
-
-    $pendiente = ($data->montopendiente < 0) ? 0 : $data->montopendiente;
+    $pendiente = ($data->monto_pendiente < 0) ? 0 : $data->monto_pendiente;
 
     try {
 
@@ -1717,7 +1716,7 @@ $app->put('/venta/{id}', function (Request $request, Response $response, array $
                 WHERE venta_id=?";
 
         $stmt = $pdo->prepare($sql);
-        $stmt->execute([$idVenta]);
+        $stmt->execute([$data->id]);
 
         $detalleAnterior = $stmt->fetchAll(PDO::FETCH_OBJ);
 

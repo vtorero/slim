@@ -1693,47 +1693,74 @@ $app->post('/venta', function (Request $request, Response $response) use ($pdo) 
     return $response->withHeader('Content-Type', 'application/json');
 });
 
-$app->put('/venta', function (Request $request, Response $response, array $args) use ($pdo) {
-
-
-
-    $j = json_decode($request->getBody()->getContents());
-   /*Declarar varialbles*/
-    $data = $j->venta;
-    $detPagos = $j->pagos;
-    $valor_neto = 0;
-    $total_descuento = 0;
-
-    $pendiente = ($data->monto_pendiente < 0) ? 0 : $data->monto_pendiente;
+$app->put('/venta', function (
+    Request $request,
+    Response $response,
+    array $args
+) use ($pdo) {
 
     try {
+
+        $body = json_decode(
+            $request->getBody()->getContents()
+        );
+
+        if (
+            !$body ||
+            !isset($body->venta) ||
+            !isset($body->venta->id)
+        ) {
+            throw new Exception('Los datos de la venta son inválidos.');
+        }
+
+        $data = $body->venta;
+        $detalleVenta = $data->detalleVenta ?? [];
+
+        $valorNeto = 0;
+        $totalDescuento = 0;
+        $montoIgv = 0;
+        $valorTotal = 0;
+        $totalPagado = 0;
+        $pendiente = 0;
 
         $pdo->beginTransaction();
 
         //---------------------------------------------------
-        // DEVOLVER STOCK DEL DETALLE ANTERIOR
+        // OBTENER EL DETALLE ANTERIOR
         //---------------------------------------------------
 
-        $sql = "SELECT id_producto,cantidad,id_inventario
-                FROM venta_detalle
-                WHERE id_venta=?";
+        $stmtDetalleAnterior = $pdo->prepare("
+            SELECT
+                id_producto,
+                cantidad,
+                id_inventario
+            FROM venta_detalle
+            WHERE id_venta = ?
+        ");
 
-        $stmt = $pdo->prepare($sql);
-        $stmt->execute([$data->id]);
+        $stmtDetalleAnterior->execute([
+            $data->id
+        ]);
 
-        $detalleAnterior = $stmt->fetchAll(PDO::FETCH_OBJ);
+        $detalleAnterior = $stmtDetalleAnterior->fetchAll(
+            PDO::FETCH_OBJ
+        );
 
-        foreach ($detalleAnterior as $item){
+        //---------------------------------------------------
+        // DEVOLVER EL STOCK DEL DETALLE ANTERIOR
+        //---------------------------------------------------
 
-            $sqlInv = "
-                UPDATE inventario
-                SET cantidad = cantidad + ?,
-                    fecha_actualizacion = NOW()
-                WHERE producto_id = ?
-                AND id_almacen = ?
-            ";
+        $stmtDevolverStock = $pdo->prepare("
+            UPDATE inventario
+            SET cantidad = cantidad + ?,
+                fecha_actualizacion = NOW()
+            WHERE producto_id = ?
+              AND id_almacen = ?
+        ");
 
-            $pdo->prepare($sqlInv)->execute([
+        foreach ($detalleAnterior as $item) {
+
+            $stmtDevolverStock->execute([
                 $item->cantidad,
                 $item->id_producto,
                 $item->id_inventario
@@ -1741,214 +1768,467 @@ $app->put('/venta', function (Request $request, Response $response, array $args)
         }
 
         //---------------------------------------------------
-        // ELIMINAR MOVIMIENTOS
+        // ELIMINAR MOVIMIENTOS ANTERIORES
         //---------------------------------------------------
 
-        $pdo->prepare("
+        $stmtEliminarMovimientos = $pdo->prepare("
             DELETE FROM movimiento_articulos
-            WHERE  id_venta=?
-        ")->execute([$data->id]);
+            WHERE id_venta = ?
+        ");
+
+        $stmtEliminarMovimientos->execute([
+            $data->id
+        ]);
 
         //---------------------------------------------------
-        // ELIMINAR DETALLE
+        // ELIMINAR SOLAMENTE EL DETALLE ANTERIOR
         //---------------------------------------------------
 
-        $pdo->prepare("
+        $stmtEliminarDetalle = $pdo->prepare("
             DELETE FROM venta_detalle
-            WHERE id_venta=?
-        ")->execute([$data->id]);
+            WHERE id_venta = ?
+        ");
+
+        $stmtEliminarDetalle->execute([
+            $data->id
+        ]);
+
+        /*
+         * NO SE ELIMINAN LOS PAGOS.
+         *
+         * Se eliminó intencionalmente:
+         *
+         * DELETE FROM venta_pagos WHERE id_venta = ?
+         *
+         * Tampoco se vuelve a ejecutar p_venta_pago(),
+         * porque eso podría duplicar los pagos existentes.
+         */
 
         //---------------------------------------------------
-        // ELIMINAR PAGOS
+        // RECALCULAR LOS TOTALES DE LA VENTA
         //---------------------------------------------------
 
-        $pdo->prepare("
-            DELETE FROM venta_pagos
-            WHERE id_venta=?
-        ")->execute([$data->id]);
+        foreach ($detalleVenta as $item) {
+
+            $cantidad = (float) ($item->cantidad ?? 0);
+            $precio = (float) ($item->precio ?? 0);
+            $descuento = (float) ($item->descuento ?? 0);
+
+            $subtotal = $cantidad * $precio;
+
+            $valorNeto += $subtotal;
+            $totalDescuento += $descuento;
+        }
+
+        $valorNeto = round(
+            $valorNeto - $totalDescuento,
+            2
+        );
+
+        // Evitar que el valor neto sea negativo.
+        $valorNeto = max(0, $valorNeto);
+
+        $montoIgv = round($valorNeto * 0.18, 2);
+
+        // Se mantiene la lógica original.
+        $valorTotal = $valorNeto;
 
         //---------------------------------------------------
-        // ACTUALIZAR CABECERA
+        // OBTENER EL TOTAL DE PAGOS EXISTENTES
         //---------------------------------------------------
 
-/* recalcula totales */
-foreach($data->detalleVenta as $item){
+        $stmtPagos = $pdo->prepare("
+            SELECT COALESCE(SUM(monto), 0)
+            FROM venta_pagos
+            WHERE id_venta = ?
+        ");
 
-    $subtotal = $item->cantidad * $item->precio;
+        $stmtPagos->execute([
+            $data->id
+        ]);
 
-    $valor_neto += $subtotal;
-    $total_descuento += $item->descuento;
+        $totalPagado = (float) $stmtPagos->fetchColumn();
 
-}
+        //---------------------------------------------------
+        // RECALCULAR EL MONTO PENDIENTE
+        //---------------------------------------------------
 
-$valor_neto -= $total_descuento;
-$monto_igv = round($valor_neto * 0.18,2);
-$valor_total = $valor_neto;
+        $pendiente = round(
+            $valorTotal - $totalPagado,
+            2
+        );
 
-        $sql = "
+        // Si los pagos son mayores al nuevo total,
+        // el monto pendiente queda en cero.
+        $pendiente = max(0, $pendiente);
 
-        UPDATE ventas SET
-            id_vendedor=?,
-            id_cliente=?,
-            id_sucursal=?,
-            tipoDoc=?,
-            valor_neto=?,
-            valor_total=?,
-            monto_pendiente=?,
-            monto_igv=?,
-            observacion=?,
-            usuario=?,
-            fecha_registro=NOW()
+        //---------------------------------------------------
+        // ACTUALIZAR LA CABECERA DE LA VENTA
+        //---------------------------------------------------
 
-        WHERE id=?
+        $stmtActualizarVenta = $pdo->prepare("
+            UPDATE ventas
+            SET id_vendedor = ?,
+                id_cliente = ?,
+                id_sucursal = ?,
+                tipoDoc = ?,
+                valor_neto = ?,
+                valor_total = ?,
+                monto_pendiente = ?,
+                monto_igv = ?,
+                observacion = ?,
+                usuario = ?,
+                fecha_registro = NOW()
+            WHERE id = ?
+        ");
 
-        ";
-
-        $pdo->prepare($sql)->execute([
-
+        $stmtActualizarVenta->execute([
             $data->id_vendedor,
             $data->cliente,
             $data->id_sucursal,
             $data->tipoDoc,
-            $valor_neto,
-            $valor_total,
+            $valorNeto,
+            $valorTotal,
             $pendiente,
-            $monto_igv,
-            $data->observacion,
+            $montoIgv,
+            $data->observacion ?? '',
             $data->nombre,
             $data->id
-
         ]);
 
         //---------------------------------------------------
-        // REGISTRAR PAGOS
+        // REGISTRAR EL NUEVO DETALLE
         //---------------------------------------------------
 
-        $valor_total = $data->valor_total;
+        foreach ($detalleVenta as $item) {
 
-        foreach($detPagos as $pago){
+            $stmtNuevoDetalle = $pdo->prepare("
+                CALL p_venta_detalle(
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                )
+            ");
 
-            $valor_total -= $pago->monto;
-
-            if($valor_total < 0){
-
-                $pago->monto += $data->monto_pendiente;
-                $valor_total = 0;
-
-            }
-
-            $stmt = $pdo->prepare("CALL p_venta_pago(?,?,?,?,?,?,?)");
-
-            $stmt->execute([
-
-                $data->id,
-                '',
-                $pago->numero_operacion,
-                $pago->cuentaPago,
-                $pago->monto,
-                (count($detPagos)==1)?$pendiente:$valor_total,
-                $data->nombre
-
-            ]);
-
-            $stmt->closeCursor();
-
-        }
-
-        //---------------------------------------------------
-        // NUEVO DETALLE
-        //---------------------------------------------------
-
-        foreach($data->detalleVenta as $item){
-
-            $stmt = $pdo->prepare("CALL p_venta_detalle(?,?,?,?,?,?,?,?,?,?)");
-
-            $stmt->execute([
-
+            $stmtNuevoDetalle->execute([
                 $data->id,
                 $item->id_producto,
                 $item->id_inventario,
                 $item->codigo,
                 '',
                 $item->cantidad,
-                $item->pendiente,
-                $item->descuento,
+                $item->pendiente ?? 0,
+                $item->descuento ?? 0,
                 $item->precio,
                 $data->nombre
-
             ]);
 
-            $stmt->closeCursor();
+            $stmtNuevoDetalle->closeCursor();
 
             //------------------------------------------------
-            // DESCONTAR INVENTARIO
+            // DESCONTAR INVENTARIO DEL NUEVO DETALLE
             //------------------------------------------------
 
-            $pdo->prepare("
+            $stmtDescontarStock = $pdo->prepare("
                 UPDATE inventario
-                SET cantidad=cantidad-?,
-                    fecha_actualizacion=NOW()
-                WHERE producto_id=?
-                AND id_almacen=?
-            ")->execute([
+                SET cantidad = cantidad - ?,
+                    fecha_actualizacion = NOW()
+                WHERE producto_id = ?
+                  AND id_almacen = ?
+            ");
 
+            $stmtDescontarStock->execute([
                 $item->cantidad,
-                $item->id,
-                $data->id_sucursal
-
+                $item->id_producto,
+                $item->id_inventario
             ]);
 
             //------------------------------------------------
-            // MOVIMIENTO
+            // REGISTRAR EL NUEVO MOVIMIENTO
             //------------------------------------------------
 
-            $stmtMov = $pdo->prepare("
+            $stmtMovimiento = $pdo->prepare("
                 CALL p_registrar_movimiento(
-                    ?,?,?,?,?,?,?,?
+                    ?, ?, ?, ?, ?, ?, ?, ?
                 )
             ");
 
-            $stmtMov->execute([
-
-                $item->id,
+            $stmtMovimiento->execute([
+                $item->id_producto,
                 $data->id,
                 'Salida',
                 $item->cantidad,
                 $item->precio,
                 $data->nombre,
-                $data->id_sucursal,
-                'Actualización venta N° '.$data->id
-
+                $item->id_inventario,
+                'Actualización venta N° ' . $data->id
             ]);
 
-            $stmtMov->closeCursor();
-
+            $stmtMovimiento->closeCursor();
         }
 
-        //$pdo->commit();
+        //---------------------------------------------------
+        // CONFIRMAR TODOS LOS CAMBIOS
+        //---------------------------------------------------
 
-        $result=[
-            "STATUS"=>true,
-            "numero"=>$data->id,
-            "messaje"=>"Venta actualizada correctamente."
+        $pdo->commit();
+
+        $result = [
+            'STATUS' => true,
+            'numero' => $data->id,
+            'valor_total' => $valorTotal,
+            'total_pagado' => $totalPagado,
+            'monto_pendiente' => $pendiente,
+            'messaje' => 'Venta actualizada correctamente.'
         ];
 
-    }catch(Exception $e){
+    } catch (Throwable $e) {
 
-        $pdo->rollBack();
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
 
-        $result=[
-            "STATUS"=>false,
-            "messaje"=>$e->getMessage()
+        $result = [
+            'STATUS' => false,
+            'messaje' => $e->getMessage()
         ];
-
     }
 
-    $response->getBody()->write(json_encode($result));
+    $response->getBody()->write(
+        json_encode(
+            $result,
+            JSON_UNESCAPED_UNICODE
+        )
+    );
 
-    return $response->withHeader('Content-Type','application/json');
-
+    return $response->withHeader(
+        'Content-Type',
+        'application/json; charset=utf-8'
+    );
 });
+
+/*eliminar pago de venta*/
+
+$app->delete(
+    '/venta-pago/{idVenta}/{idPago}',
+    function (
+        Request $request,
+        Response $response,
+        array $args
+    ) use ($pdo) {
+
+        $idVenta = (int) ($args['idVenta'] ?? 0);
+        $idPago  = (int) ($args['idPago'] ?? 0);
+
+        try {
+
+            if ($idVenta <= 0 || $idPago <= 0) {
+                throw new Exception('Los identificadores son inválidos.');
+            }
+
+            $pdo->beginTransaction();
+
+            //---------------------------------------------------
+            // OBTENER Y BLOQUEAR LA VENTA
+            //---------------------------------------------------
+
+            $stmtVenta = $pdo->prepare("
+                SELECT id, valor_total
+                FROM ventas
+                WHERE id = ?
+                FOR UPDATE
+            ");
+
+            $stmtVenta->execute([$idVenta]);
+
+            $venta = $stmtVenta->fetch(PDO::FETCH_OBJ);
+
+            if (!$venta) {
+                throw new Exception('La venta no existe.');
+            }
+
+            $valorTotal = round((float) $venta->valor_total, 2);
+
+            //---------------------------------------------------
+            // VERIFICAR QUE EL PAGO EXISTA
+            //---------------------------------------------------
+
+            /*
+             * Cambia `id` por el nombre real de la llave
+             * primaria de venta_pagos, por ejemplo:
+             *
+             * id_pago
+             * id_venta_pago
+             */
+
+            $stmtPago = $pdo->prepare("
+                SELECT id, monto
+                FROM venta_pagos
+                WHERE id = ?
+                  AND id_venta = ?
+                FOR UPDATE
+            ");
+
+            $stmtPago->execute([
+                $idPago,
+                $idVenta
+            ]);
+
+            $pago = $stmtPago->fetch(PDO::FETCH_OBJ);
+
+            if (!$pago) {
+                throw new Exception(
+                    'El pago no existe o no pertenece a la venta.'
+                );
+            }
+
+            //---------------------------------------------------
+            // ELIMINAR EL PAGO SELECCIONADO
+            //---------------------------------------------------
+
+            $stmtEliminarPago = $pdo->prepare("
+                DELETE FROM venta_pagos
+                WHERE id = ?
+                  AND id_venta = ?
+            ");
+
+            $stmtEliminarPago->execute([
+                $idPago,
+                $idVenta
+            ]);
+
+            if ($stmtEliminarPago->rowCount() === 0) {
+                throw new Exception('No se pudo eliminar el pago.');
+            }
+
+            //---------------------------------------------------
+            // OBTENER LOS PAGOS QUE QUEDARON
+            //---------------------------------------------------
+
+            /*
+             * Es importante ordenar los pagos cronológicamente.
+             * Aquí se usa `id`, pero puedes usar fecha_registro
+             * si esa columna existe.
+             */
+
+            $stmtPagos = $pdo->prepare("
+                SELECT id, monto
+                FROM venta_pagos
+                WHERE id_venta = ?
+                ORDER BY id ASC
+                FOR UPDATE
+            ");
+
+            $stmtPagos->execute([$idVenta]);
+
+            $pagosRestantes = $stmtPagos->fetchAll(PDO::FETCH_OBJ);
+
+            //---------------------------------------------------
+            // RECALCULAR MONTO_PENDIENTE DE CADA PAGO
+            //---------------------------------------------------
+
+            $saldoPendiente = $valorTotal;
+            $totalPagado = 0;
+
+            $stmtActualizarPago = $pdo->prepare("
+                UPDATE venta_pagos
+                SET monto_pendiente = ?
+                WHERE id = ?
+                  AND id_venta = ?
+            ");
+
+            foreach ($pagosRestantes as $pagoRestante) {
+
+                $montoPago = round(
+                    (float) $pagoRestante->monto,
+                    2
+                );
+
+                $totalPagado += $montoPago;
+
+                $saldoPendiente = round(
+                    $saldoPendiente - $montoPago,
+                    2
+                );
+
+                // No guardar saldos negativos.
+                $saldoPago = max(0, $saldoPendiente);
+
+                $stmtActualizarPago->execute([
+                    $saldoPago,
+                    $pagoRestante->id,
+                    $idVenta
+                ]);
+            }
+
+            //---------------------------------------------------
+            // CALCULAR SALDO FINAL DE LA VENTA
+            //---------------------------------------------------
+
+            $montoPendienteVenta = round(
+                $valorTotal - $totalPagado,
+                2
+            );
+
+            $montoPendienteVenta = max(
+                0,
+                $montoPendienteVenta
+            );
+
+            //---------------------------------------------------
+            // ACTUALIZAR MONTO_PENDIENTE EN VENTAS
+            //---------------------------------------------------
+
+            $stmtActualizarVenta = $pdo->prepare("
+                UPDATE ventas
+                SET monto_pendiente = ?
+                WHERE id = ?
+            ");
+
+            $stmtActualizarVenta->execute([
+                $montoPendienteVenta,
+                $idVenta
+            ]);
+
+            //---------------------------------------------------
+            // CONFIRMAR TRANSACCIÓN
+            //---------------------------------------------------
+
+            $pdo->commit();
+
+            $result = [
+                'STATUS'          => true,
+                'id_venta'        => $idVenta,
+                'id_pago'         => $idPago,
+                'valor_total'     => $valorTotal,
+                'total_pagado'    => round($totalPagado, 2),
+                'monto_pendiente' => $montoPendienteVenta,
+                'menssaje'         => 'Pago eliminado y saldos recalculados correctamente.'
+            ];
+
+        } catch (Throwable $e) {
+
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+
+            $result = [
+                'STATUS'  => false,
+                'menssaje' => $e->getMessage()
+            ];
+        }
+
+        $response->getBody()->write(
+            json_encode(
+                $result,
+                JSON_UNESCAPED_UNICODE
+            )
+        );
+
+        return $response->withHeader(
+            'Content-Type',
+            'application/json; charset=utf-8'
+        );
+    }
+);
 
 
 $app->get('/venta/{id}', function (Request $request, Response $response, $args) use ($pdo) {
@@ -2251,99 +2531,177 @@ $app->post('/compra', function (Request $request, Response $response) use ($pdo)
     return $response->withHeader('Content-Type', 'application/json');
 });
 
-$app->post('/actualiza-monto', function (Request $request, Response $response) use ($pdo) {
+$app->post('/actualiza-monto', function (
+    Request $request,
+    Response $response
+) use ($pdo) {
 
-    $data = json_decode($request->getBody()->getContents(), true);
-    $data = json_decode($data['json']);
+    $result = [
+        'STATUS' => false,
+        'messaje' => 'No se pudo procesar el pago'
+    ];
 
     try {
+        /*
+         * Si Angular envía:
+         * { "json": "{\"id_venta\":1,...}" }
+         */
+        $body = json_decode(
+            $request->getBody()->getContents(),
+            true
+        );
 
-        // Obtener monto pendiente actual
-        $stmt = $pdo->prepare("SELECT monto_pendiente
-                             FROM venta_pagos
-                             WHERE id_venta = :id_venta
-                             ORDER BY id DESC
-                             LIMIT 1");
-        $stmt->execute(['id_venta' => $data->id_venta]);
-        $prods = $stmt->fetch(PDO::FETCH_ASSOC);
-
-        if (!$prods) {
-            throw new Exception("No se encontró información de pagos");
+        if (!isset($body['json'])) {
+            throw new Exception('No se recibió el parámetro json');
         }
 
-        $montoPendiente = $prods['monto_pendiente'];
+        $data = json_decode($body['json']);
 
-        if ($montoPendiente >= $data->monto) {
-
-            $nuevoMonto = $montoPendiente - $data->monto;
-
-            // Insertar pago
-            $stmtInsert = $pdo->prepare("INSERT INTO venta_pagos
-                (id_venta, tipoPago, numero_operacion, cuentaPago, monto, monto_pendiente, estado, usuario)
-                VALUES (:id_venta, :tipo_pago, :numero, :cuenta_pago, :monto, :monto_pendiente, 1, :usuario)");
-
-            $stmtInsert->execute([
-                'id_venta' => $data->id_venta,
-                'tipo_pago' => '',
-                'numero' => $data->numero,
-                'cuenta_pago' => $data->cuenta_pago,
-                'monto' => $data->monto,
-                'monto_pendiente' => $nuevoMonto,
-                'usuario' => $data->usuario
-            ]);
-
-            // Actualizar venta
-            $stmtUpdate = $pdo->prepare("UPDATE ventas
-                                       SET monto_pendiente = :monto
-                                       WHERE id = :id_venta");
-
-            $stmtUpdate->execute([
-                'monto' => $nuevoMonto,
-                'id_venta' => $data->id_venta
-            ]);
-
-            // Validar si quedó en 0
-            if ($nuevoMonto == 0) {
-                $stmtZero = $pdo->prepare("UPDATE venta_pagos
-                                         SET monto_pendiente = 0
-                                         WHERE id_venta = :id_venta");
-
-                $stmtZero->execute([
-                    'id_venta' => $data->id_venta
-                ]);
-            }
-
-            $result = [
-                "STATUS" => true,
-                "messaje" => "Monto pendiente actualizado correctamente"
-            ];
-
-        } else {
-
-            if (($montoPendiente - $data->monto) < 0) {
-                $result = [
-                    "STATUS" => false,
-                    "messaje" => "La cantidad ingresada es mayor al saldo"
-                ];
-            } else {
-                $result = [
-                    "STATUS" => false,
-                    "messaje" => "Ya no existe monto pendiente"
-                ];
-            }
+        if (json_last_error() !== JSON_ERROR_NONE || !$data) {
+            throw new Exception('El JSON recibido no es válido');
         }
 
-    } catch (Exception $e) {
+        if (
+            !isset(
+                $data->id_venta,
+                $data->monto,
+                $data->numero,
+                $data->cuenta_pago,
+                $data->usuario
+            )
+        ) {
+            throw new Exception('Faltan datos obligatorios');
+        }
+
+        $idVenta = (int) $data->id_venta;
+        $montoPago = round((float) $data->monto, 2);
+
+        if ($idVenta <= 0) {
+            throw new Exception('El identificador de la venta no es válido');
+        }
+
+        if ($montoPago <= 0) {
+            throw new Exception('El monto debe ser mayor que cero');
+        }
+
+        $pdo->beginTransaction();
+
+        /*
+         * Se obtiene directamente el saldo de la venta.
+         * FOR UPDATE evita pagos simultáneos sobre el mismo saldo.
+         */
+        $stmtVenta = $pdo->prepare(
+            'SELECT monto_pendiente
+             FROM ventas
+             WHERE id = :id_venta
+             FOR UPDATE'
+        );
+
+        $stmtVenta->execute([
+            'id_venta' => $idVenta
+        ]);
+
+        $venta = $stmtVenta->fetch(PDO::FETCH_ASSOC);
+
+        if (!$venta) {
+            throw new Exception('No se encontró la venta');
+        }
+
+        $montoPendiente = round(
+            (float) ($venta['monto_pendiente'] ?? 0),
+            2
+        );
+
+        if ($montoPendiente <= 0) {
+            throw new Exception('La venta ya no tiene monto pendiente');
+        }
+
+        if ($montoPago > $montoPendiente) {
+            throw new Exception(
+                'La cantidad ingresada es mayor al saldo pendiente'
+            );
+        }
+
+        $nuevoMonto = round(
+            $montoPendiente - $montoPago,
+            2
+        );
+
+        $stmtInsert = $pdo->prepare(
+            'INSERT INTO venta_pagos (
+                id_venta,
+                tipoPago,
+                numero_operacion,
+                cuentaPago,
+                monto,
+                monto_pendiente,
+                estado,
+                usuario
+            ) VALUES (
+                :id_venta,
+                :tipo_pago,
+                :numero_operacion,
+                :cuenta_pago,
+                :monto,
+                :monto_pendiente,
+                1,
+                :usuario
+            )'
+        );
+
+        $stmtInsert->execute([
+            'id_venta' => $idVenta,
+            'tipo_pago' => $data->tipo_pago ?? '',
+            'numero_operacion' => $data->numero,
+            'cuenta_pago' => $data->cuenta_pago,
+            'monto' => $montoPago,
+            'monto_pendiente' => $nuevoMonto,
+            'usuario' => $data->usuario
+        ]);
+
+        $stmtUpdate = $pdo->prepare(
+            'UPDATE ventas
+             SET monto_pendiente = :monto_pendiente
+             WHERE id = :id_venta'
+        );
+
+        $stmtUpdate->execute([
+            'monto_pendiente' => $nuevoMonto,
+            'id_venta' => $idVenta
+        ]);
+
+        $pdo->commit();
 
         $result = [
-            "STATUS" => false,
-            "messaje" => $e->getMessage()
+            'STATUS' => true,
+            'messaje' => $nuevoMonto == 0
+                ? 'La venta fue cancelada completamente'
+                : 'Pago registrado correctamente',
+            'monto_pagado' => $montoPago,
+            'monto_pendiente' => $nuevoMonto
+        ];
+
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+
+        $result = [
+            'STATUS' => false,
+            'messaje' => $e->getMessage()
         ];
     }
 
-    $response->getBody()->write(json_encode($result));
-    return $response->withHeader('Content-Type', 'application/json');
+    $response->getBody()->write(
+        json_encode(
+            $result,
+            JSON_UNESCAPED_UNICODE
+        )
+    );
 
+    return $response
+        ->withHeader('Content-Type', 'application/json')
+        ->withStatus($result['STATUS'] ? 200 : 400);
 });
 
 

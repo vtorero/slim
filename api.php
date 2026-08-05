@@ -1695,11 +1695,14 @@ $app->post('/venta', function (Request $request, Response $response) use ($pdo) 
 
 $app->put('/venta', function (Request $request, Response $response, array $args) use ($pdo) {
 
-    //$idVenta = $args['id'];
+
 
     $j = json_decode($request->getBody()->getContents());
+   /*Declarar varialbles*/
     $data = $j->venta;
-    $detalle = $j->pagos;
+    $detPagos = $j->pagos;
+    $valor_neto = 0;
+    $total_descuento = 0;
 
     $pendiente = ($data->monto_pendiente < 0) ? 0 : $data->monto_pendiente;
 
@@ -1711,9 +1714,9 @@ $app->put('/venta', function (Request $request, Response $response, array $args)
         // DEVOLVER STOCK DEL DETALLE ANTERIOR
         //---------------------------------------------------
 
-        $sql = "SELECT producto_id,cantidad,id_almacen
+        $sql = "SELECT id_producto,cantidad,id_inventario
                 FROM venta_detalle
-                WHERE venta_id=?";
+                WHERE id_venta=?";
 
         $stmt = $pdo->prepare($sql);
         $stmt->execute([$data->id]);
@@ -1732,8 +1735,8 @@ $app->put('/venta', function (Request $request, Response $response, array $args)
 
             $pdo->prepare($sqlInv)->execute([
                 $item->cantidad,
-                $item->producto_id,
-                $item->id_almacen
+                $item->id_producto,
+                $item->id_inventario
             ]);
         }
 
@@ -1743,9 +1746,8 @@ $app->put('/venta', function (Request $request, Response $response, array $args)
 
         $pdo->prepare("
             DELETE FROM movimiento_articulos
-            WHERE documento='Venta'
-            AND documento_id=?
-        ")->execute([$idVenta]);
+            WHERE  id_venta=?
+        ")->execute([$data->id]);
 
         //---------------------------------------------------
         // ELIMINAR DETALLE
@@ -1753,8 +1755,8 @@ $app->put('/venta', function (Request $request, Response $response, array $args)
 
         $pdo->prepare("
             DELETE FROM venta_detalle
-            WHERE venta_id=?
-        ")->execute([$idVenta]);
+            WHERE id_venta=?
+        ")->execute([$data->id]);
 
         //---------------------------------------------------
         // ELIMINAR PAGOS
@@ -1762,29 +1764,41 @@ $app->put('/venta', function (Request $request, Response $response, array $args)
 
         $pdo->prepare("
             DELETE FROM venta_pagos
-            WHERE venta_id=?
-        ")->execute([$idVenta]);
+            WHERE id_venta=?
+        ")->execute([$data->id]);
 
         //---------------------------------------------------
         // ACTUALIZAR CABECERA
         //---------------------------------------------------
 
+/* recalcula totales */
+foreach($data->detalleVenta as $item){
+
+    $subtotal = $item->cantidad * $item->precio;
+
+    $valor_neto += $subtotal;
+    $total_descuento += $item->descuento;
+
+}
+
+$valor_neto -= $total_descuento;
+$monto_igv = round($valor_neto * 0.18,2);
+$valor_total = $valor_neto;
+
         $sql = "
 
         UPDATE ventas SET
-
-            vendedor=?,
-            cliente=?,
-            sucursal=?,
-            entrega=?,
-            tipo_documento=?,
-            subtotal=?,
-            total=?,
-            pendiente=?,
-            igv=?,
-            comentario=?,
-            usuario_modifica=?,
-            fecha_modifica=NOW()
+            id_vendedor=?,
+            id_cliente=?,
+            id_sucursal=?,
+            tipoDoc=?,
+            valor_neto=?,
+            valor_total=?,
+            monto_pendiente=?,
+            monto_igv=?,
+            observacion=?,
+            usuario=?,
+            fecha_registro=NOW()
 
         WHERE id=?
 
@@ -1792,18 +1806,17 @@ $app->put('/venta', function (Request $request, Response $response, array $args)
 
         $pdo->prepare($sql)->execute([
 
-            $data->vendedor,
+            $data->id_vendedor,
             $data->cliente,
-            $data->sucursal,
-            $data->entrega,
+            $data->id_sucursal,
             $data->tipoDoc,
-            $data->neto,
-            $data->total,
+            $valor_neto,
+            $valor_total,
             $pendiente,
-            ($data->total-$data->neto),
-            $data->comentario,
-            $data->usuario,
-            $idVenta
+            $monto_igv,
+            $data->observacion,
+            $data->nombre,
+            $data->id
 
         ]);
 
@@ -1811,15 +1824,15 @@ $app->put('/venta', function (Request $request, Response $response, array $args)
         // REGISTRAR PAGOS
         //---------------------------------------------------
 
-        $valor_total = $data->total;
+        $valor_total = $data->valor_total;
 
-        foreach($data->pagos as $pago){
+        foreach($detPagos as $pago){
 
-            $valor_total -= $pago->montoPago;
+            $valor_total -= $pago->monto;
 
             if($valor_total < 0){
 
-                $pago->montoPago += $data->montopendiente;
+                $pago->monto += $data->monto_pendiente;
                 $valor_total = 0;
 
             }
@@ -1828,13 +1841,13 @@ $app->put('/venta', function (Request $request, Response $response, array $args)
 
             $stmt->execute([
 
-                $idVenta,
+                $data->id,
                 '',
-                $pago->numero,
+                $pago->numero_operacion,
                 $pago->cuentaPago,
-                $pago->montoPago,
-                (count($data->pagos)==1)?$pendiente:$valor_total,
-                $data->usuario
+                $pago->monto,
+                (count($detPagos)==1)?$pendiente:$valor_total,
+                $data->nombre
 
             ]);
 
@@ -1846,22 +1859,22 @@ $app->put('/venta', function (Request $request, Response $response, array $args)
         // NUEVO DETALLE
         //---------------------------------------------------
 
-        foreach($detalle as $item){
+        foreach($data->detalleVenta as $item){
 
             $stmt = $pdo->prepare("CALL p_venta_detalle(?,?,?,?,?,?,?,?,?,?)");
 
             $stmt->execute([
 
-                $idVenta,
-                $item->id,
-                $item->id,
+                $data->id,
+                $item->id_producto,
+                $item->id_inventario,
                 $item->codigo,
                 '',
                 $item->cantidad,
                 $item->pendiente,
                 $item->descuento,
                 $item->precio,
-                $data->usuario
+                $data->nombre
 
             ]);
 
@@ -1879,9 +1892,9 @@ $app->put('/venta', function (Request $request, Response $response, array $args)
                 AND id_almacen=?
             ")->execute([
 
-                $item->despacho,
+                $item->cantidad,
                 $item->id,
-                $data->sucursal
+                $data->id_sucursal
 
             ]);
 
@@ -1898,13 +1911,13 @@ $app->put('/venta', function (Request $request, Response $response, array $args)
             $stmtMov->execute([
 
                 $item->id,
-                $idVenta,
+                $data->id,
                 'Salida',
-                $item->despacho,
+                $item->cantidad,
                 $item->precio,
-                $data->usuario,
-                $data->sucursal,
-                'Actualización venta N° '.$idVenta
+                $data->nombre,
+                $data->id_sucursal,
+                'Actualización venta N° '.$data->id
 
             ]);
 
@@ -1912,11 +1925,11 @@ $app->put('/venta', function (Request $request, Response $response, array $args)
 
         }
 
-        $pdo->commit();
+        //$pdo->commit();
 
         $result=[
             "STATUS"=>true,
-            "numero"=>$idVenta,
+            "numero"=>$data->id,
             "messaje"=>"Venta actualizada correctamente."
         ];
 
@@ -2171,7 +2184,6 @@ $app->post('/compra', function (Request $request, Response $response) use ($pdo)
 
         // 🔹 Detalle + Inventario + Movimiento
         foreach ($detalle as $item) {
-
             // detalle
             $stmtD = $pdo->prepare("CALL p_compra_detalle(?,?,?,?,?,?,?,?,?)");
             $stmtD->execute([
@@ -2272,7 +2284,7 @@ $app->post('/actualiza-monto', function (Request $request, Response $response) u
 
             $stmtInsert->execute([
                 'id_venta' => $data->id_venta,
-                'tipo_pago' => $data->tipo_pago,
+                'tipo_pago' => '',
                 'numero' => $data->numero,
                 'cuenta_pago' => $data->cuenta_pago,
                 'monto' => $data->monto,
@@ -2343,7 +2355,7 @@ $app->get('/buscarclientes/{criterio}', function (Request $request, Response $re
 
         $stmt = $pdo->prepare("
             SELECT id,nombre,num_documento
-            FROM aprendea_erp.clientes
+            FROM clientes
             WHERE nombre LIKE :criterio
                OR num_documento LIKE :criterio
         ");
@@ -2351,7 +2363,7 @@ $app->get('/buscarclientes/{criterio}', function (Request $request, Response $re
         $like = "%{$criterio}%";
 
         $stmt->execute([
-            'criterio' => $like
+            ':criterio' => $like
         ]);
 
         $prods = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -2382,7 +2394,7 @@ $app->get('/buscarproveedor/{criterio}', function (Request $request, Response $r
 
         $stmt = $pdo->prepare("
             SELECT *
-            FROM aprendea_erp.proveedores
+            FROM proveedores
             WHERE razon_social LIKE :criterio
                OR num_documento LIKE :criterio
         ");

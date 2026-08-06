@@ -1878,7 +1878,7 @@ $app->put('/venta', function (
                 monto_igv = ?,
                 observacion = ?,
                 usuario = ?,
-                fecha_registro = NOW()
+                fecha_actualizacion = NOW()
             WHERE id = ?
         ");
 
@@ -2201,7 +2201,7 @@ $app->delete(
                 'valor_total'     => $valorTotal,
                 'total_pagado'    => round($totalPagado, 2),
                 'monto_pendiente' => $montoPendienteVenta,
-                'menssaje'         => 'Pago eliminado y saldos recalculados correctamente.'
+                'messaje'         => 'Pago eliminado y saldos recalculados correctamente.'
             ];
 
         } catch (Throwable $e) {
@@ -2212,7 +2212,7 @@ $app->delete(
 
             $result = [
                 'STATUS'  => false,
-                'menssaje' => $e->getMessage()
+                'messaje' => $e->getMessage()
             ];
         }
 

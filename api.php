@@ -1563,10 +1563,7 @@ $app->get('/usuarios', function (Request $request, Response $response) use ($pdo
 
 $app->post('/item-producto', function (Request $request, Response $response) use ($pdo) {
 
-    $result = [
-        'STATUS' => 200,
-        'messaje' => 'Registro actualizado'
-    ];
+
 
     try {
 
@@ -1600,7 +1597,7 @@ $app->post('/item-producto', function (Request $request, Response $response) use
  // detalle venta
 
         // Actualizar inventario solamente por la diferencia
-        if ($detalle) {
+        if ($detalle && exist($data->prod->id)) {
 
 
             $stmProd = $pdo->prepare("SELECT * FROM productos where id=?");
@@ -1780,6 +1777,13 @@ $montoPendienteVenta = max(
             'messaje' => $e->getMessage()
         ];
     }
+
+    $result = [
+        'STATUS' => 200,
+        'messaje' => 'Registro actualizado',
+        'total' => $nuevoTotal,
+        'pendiente'=>$montoPendienteVenta
+    ];
 
     $response->getBody()->write(json_encode($result));
     return $response->withHeader('Content-Type', 'application/json');
@@ -2737,20 +2741,14 @@ $app->delete(
             $result = [
 
                 "STATUS" => true,
-
                 "id_venta" => $idVenta,
-
                 "detalle_eliminado" => $idDetalle,
-
                 "valor_total" => $nuevoTotal,
-
                 "total_pagado" => round(
                     $totalPagado,
                     2
                 ),
-
                 "monto_pendiente" => $montoPendienteVenta,
-
                 "messaje" =>
                     "Producto eliminado y venta recalculada correctamente"
 

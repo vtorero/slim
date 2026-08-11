@@ -20,11 +20,14 @@ $app = AppFactory::create();
 $usuario="aprendea_erp";
 $clave="erp2023*";
 */
-/*Local dev*/
+/*Local dev
 $dsn = "mysql:host=localhost;dbname=erp;port=3306;charset=utf8";
 $usuario="root";
 $clave= "";
-
+*/
+$dsn = "mysql:host=lh-cjm.com;dbname=aprendea_erp;port=3306;charset=utf8";
+$usuario="aprendea_erp";
+$clave="erp2023*";
 
 try {
     $pdo = new PDO($dsn, $usuario, $clave, [
@@ -165,7 +168,6 @@ $app->post('/consulta-ventas', function (Request $request, Response $response) u
 $app->post('/login', function (Request $request, Response $response) use ($pdo) {
 
     $data = json_decode($request->getBody()->getContents(), true);
-
     $sql = "SELECT u.*, s.id id_sucursal, s.nombre sucursal, s.direccion, s.telefono
             FROM usuarios u
             INNER JOIN permisos p ON u.id = p.id_usuario
@@ -192,6 +194,104 @@ $app->post('/login', function (Request $request, Response $response) use ($pdo) 
 });
 
 
+$app->post('/del_producto', function (
+    Request $request,
+    Response $response
+) use ($pdo) {
+
+    try {
+
+        // Obtener JSON enviado
+        $body = json_decode(
+            $request->getBody()->getContents(),
+            true
+        );
+
+        if (!$body) {
+            throw new Exception('Datos JSON inválidos.');
+        }
+
+        // Obtener objeto json
+        $data = json_decode(
+            $body['json'] ?? '',
+            false
+        );
+
+        if (!$data || !isset($data->producto->id)) {
+            throw new Exception(
+                'No se recibió el ID del producto.'
+            );
+        }
+
+        $idProducto = (int)$data->producto->id;
+
+        if ($idProducto <= 0) {
+            throw new Exception(
+                'El ID del producto no es válido.'
+            );
+        }
+
+
+        //---------------------------------------------------
+        // CAMBIAR ESTADO A INACTIVO
+        //---------------------------------------------------
+
+        $stmt = $pdo->prepare("
+            UPDATE productos
+            SET estado = 'inactivo'
+            WHERE id = ?
+        ");
+
+        $stmt->execute([
+            $idProducto
+        ]);
+
+
+        //---------------------------------------------------
+        // VERIFICAR SI SE ACTUALIZÓ
+        //---------------------------------------------------
+
+        if ($stmt->rowCount() === 0) {
+
+            throw new Exception(
+                'El producto no existe o ya se encuentra inactivo.'
+            );
+        }
+
+
+        $result = [
+            'success' => true,
+            'message' => 'Producto desactivado exitosamente.'
+        ];
+
+
+    } catch (Throwable $e) {
+
+        $result = [
+            'success' => false,
+            'message' => $e->getMessage()
+        ];
+    }
+
+
+    //---------------------------------------------------
+    // RESPUESTA JSON
+    //---------------------------------------------------
+
+    $response->getBody()->write(
+        json_encode(
+            $result,
+            JSON_UNESCAPED_UNICODE
+        )
+    );
+
+    return $response->withHeader(
+        'Content-Type',
+        'application/json; charset=utf-8'
+    );
+});
+
+
 
 $app->get('/articulos', function (Request $request, Response $response) use ($pdo) {
 
@@ -211,6 +311,7 @@ $app->get('/articulos', function (Request $request, Response $response) use ($pd
             LEFT JOIN categorias c ON p.id_categoria = c.id
             LEFT JOIN sub_categorias sc ON p.id_subcategoria = sc.id
             LEFT JOIN sub_sub_categorias fa ON p.id_sub_sub_categoria = fa.id
+            WHERE p.estado='activo'
             ORDER BY p.id DESC";
 
     $stmt = $pdo->prepare($sql);

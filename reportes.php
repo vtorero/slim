@@ -23,11 +23,14 @@ $app = AppFactory::create();
 
 
 */
-/*Local dev*/
+/*Local dev
+$dsn = "mysql:host=lh-cjm.com;dbname=aprendea_erp;port=3306;charset=utf8";
+$usuario="aprendea_erp";
+$clave="erp2023*";*/
+
 $dsn = "mysql:host=localhost;dbname=erp;port=3306;charset=utf8";
 $usuario="root";
 $clave= "";
-
 
 try {
     $pdo = new PDO($dsn, $usuario, $clave, [

@@ -23,15 +23,16 @@ $app = AppFactory::create();
 
 
 */
-/*Local dev
+//Local dev
+
 $dsn = "mysql:host=lh-cjm.com;dbname=aprendea_erp;port=3306;charset=utf8";
 $usuario="aprendea_erp";
-$clave="erp2023*";*/
-
+$clave="erp2023*";
+/*
 $dsn = "mysql:host=localhost;dbname=erp;port=3306;charset=utf8";
 $usuario="root";
 $clave= "";
-
+*/
 try {
     $pdo = new PDO($dsn, $usuario, $clave, [
         PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
@@ -169,7 +170,11 @@ and v.id=vp.id_venta and v.id_cliente=cl.id and vp.usuario=u.id and vp.fecha_reg
 union all
 SELECT v.id,cl.num_documento,v.fecha,vp.fecha_registro,'Compra'as tipo_movimiento,u.nombre usuario ,cl.razon_social as cliente,cl.direccion,cl.telefono, s.nombre sucursal, c.nombre,valor_total,vp.monto, vp.monto_pendiente,v.observacion
 FROM compra_pagos vp,compras v,usuarios u,sucursales s,cajas c,proveedores cl where  vp.cuentaPago=c.id and v.id_sucursal=s.id
-and v.id=vp.id_compra and v.id_proveedor=cl.id and vp.usuario=u.id and vp.fecha_registro between '{$ini} 00:00:01' and '{$fin} 23:59:59' and vp.monto>=0 ORDER BY `fecha_registro` DESC"
+and v.id=vp.id_compra and v.id_proveedor=cl.id and vp.usuario=u.id and vp.fecha_registro between '{$ini} 00:00:01' and '{$fin} 23:59:59' and vp.monto>=0
+union all
+SELECT mc.id, '00000000' as num_documento,mc.fecha_registro as fecha,mc.fecha_registro,mc.tipo as tipo_movimiento, 'admin' as usuario ,'No Aplica' as cliente,'--' as direccion,
+'--' as telefono,'---' as sucursal,'admin' as nombre,mc.monto as valor_total,mc.monto , 00 as monto_pendiente,mc.concepto as observacion from movimiento_caja  mc WHERE mc.fecha_registro between '{$ini} 00:00:01' and '{$fin} 23:59:59'
+ORDER BY `fecha_registro` DESC"
     );
 
     $info_reporte_caja = $pdo->query($sql_caja)->fetchAll();

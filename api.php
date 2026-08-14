@@ -15,20 +15,17 @@ use Psr\Http\Message\ServerRequestInterface as Request;
 use Slim\Factory\AppFactory;
 
 $app = AppFactory::create();
-/*Produccion
 
-$usuario="aprendea_erp";
-$clave="erp2023*";
-*/
-/*Local dev
+//Local dev
+
 $dsn = "mysql:host=localhost;dbname=erp;port=3306;charset=utf8";
 $usuario="root";
 $clave= "";
-*/
+/*
 $dsn = "mysql:host=lh-cjm.com;dbname=aprendea_erp;port=3306;charset=utf8";
 $usuario="aprendea_erp";
 $clave="erp2023*";
-
+*/
 try {
     $pdo = new PDO($dsn, $usuario, $clave, [
         PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
@@ -579,7 +576,7 @@ $app->post('/buscaarticulos', function (Request $request, Response $response) us
         }
 
         // Construcción dinámica segura
-        $whereNombre = implode(" AND ", $whereParts);
+        $whereNombre = implode(" AND ", $whereParts) ." AND p.estado='activo'";
 
         $sql = "SELECT
                     p.id,
@@ -1604,6 +1601,68 @@ $app->get('/permisos', function (Request $request, Response $response) use ($pdo
         ->withHeader('Content-Type', 'application/json')
         ->withStatus(200);
 });
+
+$app->post('/cajas', function (
+    Request $request,
+    Response $response
+) use ($pdo) {
+
+    try {
+
+        // Obtener datos enviados
+        $j = json_decode($request->getBody()->getContents(), true);
+
+        if (!$j || !isset($j['json'])) {
+            throw new Exception("No se recibieron datos.");
+        }
+
+        $data = json_decode($j['json']);
+
+        // Ejecutar procedimiento almacenado
+        $stmt = $pdo->prepare("
+            CALL p_cajas(?, ?, ?, ?, ?)
+        ");
+
+        $stmt->execute([
+            $data->nombre,
+            $data->tipo,
+            $data->id_sucursal,
+            1, // Estado activo
+            $data->usuario
+        ]);
+
+        $stmt->closeCursor();
+
+        $result = [
+            "STATUS"  => true,
+            "messaje" => "Caja registrada correctamente."
+        ];
+
+    } catch (PDOException $e) {
+
+        $result = [
+            "STATUS"  => false,
+            "messaje" => "Error en la base de datos: " . $e->getMessage()
+        ];
+
+    } catch (Exception $e) {
+
+        $result = [
+            "STATUS"  => false,
+            "messaje" => $e->getMessage()
+        ];
+    }
+
+    $response->getBody()->write(
+        json_encode($result, JSON_UNESCAPED_UNICODE)
+    );
+
+    return $response->withHeader(
+        'Content-Type',
+        'application/json; charset=utf-8'
+    );
+});
+
 
 
 $app->get('/cajas/{uid}', function (Request $request, Response $response, $args) use ($pdo) {

@@ -688,6 +688,225 @@ $app->get('/compras', function (Request $request, Response $response) use ($pdo)
         ->withStatus(200);
 });
 
+$app->post('/consulta-compras', function (
+    Request $request,
+    Response $response
+) use ($pdo) {
+
+    $json = json_decode(
+        $request->getBody()->getContents(),
+        true
+    );
+
+    if (!$json || !isset($json['json'])) {
+        $respuesta = [
+            'status' => 400,
+            'message' => 'Datos incorrectos'
+        ];
+
+        $response->getBody()->write(
+            json_encode($respuesta)
+        );
+
+        return $response
+            ->withHeader('Content-Type', 'application/json')
+            ->withStatus(400);
+    }
+
+    $dat = json_decode($json['json']);
+
+    if (
+        !$dat ||
+        !isset($dat->ini) ||
+        !isset($dat->fin) ||
+        !isset($dat->estado)
+    ) {
+        $respuesta = [
+            'status' => 400,
+            'message' => 'Faltan parámetros'
+        ];
+
+        $response->getBody()->write(
+            json_encode($respuesta)
+        );
+
+        return $response
+            ->withHeader('Content-Type', 'application/json')
+            ->withStatus(400);
+    }
+
+    /*
+     * Las fechas vienen como:
+     *
+     * Aug142026
+     *
+     * Igual que en tu código original:
+     * substr(..., 0, 3) = Aug
+     * substr(..., 3, 2) = 14
+     * substr(..., 5, 4) = 2026
+     */
+
+    $arraymeses = [
+        'Jan', 'Feb', 'Mar', 'Apr',
+        'May', 'Jun', 'Jul', 'Aug',
+        'Sep', 'Oct', 'Nov', 'Dec'
+    ];
+
+    $arraynros = [
+        '01', '02', '03', '04',
+        '05', '06', '07', '08',
+        '09', '10', '11', '12'
+    ];
+
+    $mes1 = substr($dat->ini, 0, 3);
+    $mes2 = substr($dat->fin, 0, 3);
+
+    $dia1 = substr($dat->ini, 3, 2);
+    $dia2 = substr($dat->fin, 3, 2);
+
+    $ano1 = substr($dat->ini, 5, 4);
+    $ano2 = substr($dat->fin, 5, 4);
+
+    $fmes1 = str_replace(
+        $arraymeses,
+        $arraynros,
+        $mes1
+    );
+
+    $fmes2 = str_replace(
+        $arraymeses,
+        $arraynros,
+        $mes2
+    );
+
+    $ini = $ano1 . '-' . $fmes1 . '-' . $dia1;
+    $fin = $ano2 . '-' . $fmes2 . '-' . $dia2;
+
+
+    /*
+     * Consulta usando PDO
+     */
+    $sql = "
+        SELECT
+            v.id,
+            c.razon_social AS cliente,
+            u.nombre,
+            v.tipoDoc,
+            v.serie_documento,
+            v.nro_documento,
+            v.id_sucursal,
+
+            DATE_FORMAT(
+                v.fecha,
+                '%d-%m-%Y'
+            ) AS fecha,
+
+            DATE_FORMAT(
+                v.fecha_registro,
+                '%d-%m-%Y'
+            ) AS fechaPago,
+
+            IF(
+                v.pendientes = 0,
+                'No',
+                'Si'
+            ) AS pendientes,
+
+            CASE
+                WHEN v.estado = '1' THEN 'Registrado'
+                WHEN v.estado = '2' THEN 'Anulado'
+            END AS estado,
+
+            v.igv,
+            v.monto_igv,
+            v.descuento,
+            v.valor_neto,
+            v.valor_total,
+            v.monto_pendiente,
+            v.observacion
+
+        FROM compras v
+
+        INNER JOIN proveedores c
+            ON v.id_proveedor = c.id
+
+        INNER JOIN usuarios u
+            ON v.id_usuario = u.id
+
+        WHERE v.fecha_registro BETWEEN
+            :fecha_inicio
+            AND
+            :fecha_fin
+
+        AND v.estado = :estado
+
+        ORDER BY v.id DESC
+    ";
+
+    try {
+
+        $stmt = $pdo->prepare($sql);
+
+        $stmt->bindValue(
+            ':fecha_inicio',
+            $ini . ' 00:00:01',
+            PDO::PARAM_STR
+        );
+
+        $stmt->bindValue(
+            ':fecha_fin',
+            $fin . ' 23:59:59',
+            PDO::PARAM_STR
+        );
+
+        $stmt->bindValue(
+            ':estado',
+            (int)$dat->estado,
+            PDO::PARAM_INT
+        );
+
+        $stmt->execute();
+
+        $prods = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $response->getBody()->write(
+            json_encode(
+                $prods,
+                JSON_UNESCAPED_UNICODE
+            )
+        );
+
+        return $response
+            ->withHeader(
+                'Content-Type',
+                'application/json; charset=utf-8'
+            )
+            ->withStatus(200);
+
+    } catch (PDOException $e) {
+
+        $respuesta = [
+            'status' => 500,
+            'message' => 'Error al consultar las compras',
+            'error' => $e->getMessage()
+        ];
+
+        $response->getBody()->write(
+            json_encode(
+                $respuesta,
+                JSON_UNESCAPED_UNICODE
+            )
+        );
+
+        return $response
+            ->withHeader(
+                'Content-Type',
+                'application/json; charset=utf-8'
+            )
+            ->withStatus(500);
+    }
+});
+
 
 $app->get('/proveedores', function (Request $request, Response $response) use ($pdo) {
 

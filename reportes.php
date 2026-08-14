@@ -24,15 +24,15 @@ $app = AppFactory::create();
 
 */
 //Local dev
-
+/*
 $dsn = "mysql:host=lh-cjm.com;dbname=aprendea_erp;port=3306;charset=utf8";
 $usuario="aprendea_erp";
 $clave="erp2023*";
-/*
+*/
 $dsn = "mysql:host=localhost;dbname=erp;port=3306;charset=utf8";
 $usuario="root";
 $clave= "";
-*/
+
 try {
     $pdo = new PDO($dsn, $usuario, $clave, [
         PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
@@ -1248,5 +1248,129 @@ $params = [
 });
 
 
+$app->post('/compras', function (Request $request, Response $response) use ($pdo) {
+
+    $data = json_decode($request->getBody()->getContents(), true);
+
+    $arraymeses = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    $arraynros  = ['01','02','03','04','05','06','07','08','09','10','11','12'];
+
+    $mes1 = substr($data['fechaincio'], 0, 3);
+    $mes2 = substr($data['fechafin'], 0, 3);
+
+    $dia1 = substr($data['fechaincio'], 3, 2);
+    $dia2 = substr($data['fechafin'], 3, 2);
+
+    $ano1 = substr($data['fechaincio'], 5, 4);
+    $ano2 = substr($data['fechafin'], 5, 4);
+
+    $ini = $ano1 . '-' . str_replace($arraymeses, $arraynros, $mes1) . '-' . $dia1 . ' 00:00:01';
+    $fin = $ano2 . '-' . str_replace($arraymeses, $arraynros, $mes2) . '-' . $dia2 . ' 23:59:59';
+
+
+
+    $sql = "
+        SELECT
+            cd.id_compra,
+            pr.razon_social,
+            pr.num_documento,
+            c.tipoDoc,
+            c.serie_documento,
+            c.nro_documento,
+            p.codigo,
+            p.nombre,
+            p.unidad,
+            cd.cantidad,
+            cd.precio,
+            cd.subtotal,
+            c.fecha,
+            c.fecha_registro,
+            u.nombre AS usuario
+        FROM compra_detalle cd
+        INNER JOIN productos p ON cd.id_producto = p.id
+        INNER JOIN compras c ON cd.id_compra = c.id
+        INNER JOIN proveedores pr ON c.id_proveedor = pr.id
+        INNER JOIN usuarios u ON c.id_usuario = u.id
+        WHERE c.fecha BETWEEN :inicio AND :fin
+        ORDER BY c.fecha ASC
+    ";
+
+
+
+    $stmt = $pdo->prepare($sql);
+    $stmt->bindValue(':inicio', $ini);
+    $stmt->bindValue(':fin', $fin);
+    $stmt->execute();
+
+    $fileName = "members-data_" . date('Y-m-d') . ".xls";
+
+    $excelData = "";
+
+    if ($stmt->rowCount() > 0) {
+
+        $fields = [
+            'Fecha',
+            'Tipo de documento',
+            'Serie',
+            'Documento',
+            'Numero',
+            'Nombre Razon Social',
+            'Codigo',
+            'Descripcion del producto',
+            'Precio de compra',
+            'Cantidad',
+            'U.M',
+            'ID',
+            'Fecha de registro',
+            'Movimiento',
+            'Usuario'
+        ];
+
+        $excelData .= implode("\t", $fields) . "\n";
+
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+
+            $lineData = [
+                substr($row['fecha'], 0, 10),
+                $row['tipoDoc'],
+                $row['serie_documento'],
+                $row['num_documento'],
+                $row['nro_documento'],
+                $row['razon_social'],
+                $row['codigo'],
+                $row['nombre'],
+                $row['precio'],
+                $row['cantidad'],
+                $row['unidad'],
+                $row['id_compra'],
+                $row['fecha_registro'],
+                'Salida',
+                $row['usuario']
+            ];
+
+            array_walk($lineData,'filterData');
+
+            $excelData .= implode("\t", $lineData) . "\n";
+        }
+
+    } else {
+
+        $excelData = "No hay resultados de la consulta...\n";
+    }
+
+    $response = $response
+        ->withHeader('Content-Type', 'application/vnd.ms-excel; charset=UTF-8')
+        ->withHeader('Content-Disposition', 'attachment; filename="' . $fileName . '"');
+
+    $response->getBody()->write($excelData);
+
+    return $response;
+});
+
+function filterData(&$str){
+    $str = preg_replace("/\t/", "\\t", $str);
+    $str = preg_replace("/\r?\n/", "\\n", $str);
+    if(strstr($str, '"')) $str = '"' . str_replace('"', '""', $str) . '"';
+}
 
 $app->run();

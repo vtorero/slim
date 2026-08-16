@@ -3332,6 +3332,16 @@ $app->get('/sucursalusuario/{id}', function (Request $request, Response $respons
 });
 
 
+$app->post('/nota-credito-compra', function (Request $request, Response $response) use ($pdo) {
+
+    $j = json_decode($request->getBody()->getContents(), true);
+
+    $data = json_decode($j['json']);
+    print_r($data);
+
+});
+
+
 $app->post('/compra', function (Request $request, Response $response) use ($pdo) {
 
     $j = json_decode($request->getBody()->getContents(), true);

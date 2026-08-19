@@ -3,6 +3,7 @@ CREATE TABLE `notacreditos` (
   `id_usuario` varchar(10) NOT NULL,
   `serie_documento` varchar(15) DEFAULT NULL,
   `nro_documento` varchar(30) DEFAULT NULL,
+  `id_compra` int DEFAULT NULL,
   `id_proveedor` int NOT NULL,
   `id_sucursal` int NOT NULL,
   `devolucion` tinyint DEFAULT NULL,
@@ -22,4 +23,21 @@ CREATE TABLE `notacreditos` (
   `fecha` datetime NOT NULL,
   `fecha_registro` datetime DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`)
-  ) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+
+
+CREATE TABLE `detalle_nota_credito_compra` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `id_nota` int NOT NULL,
+  `id_producto` int NOT NULL,
+  `id_inventario` int NOT NULL,
+  `codigo` varchar(45) DEFAULT NULL,
+  `unidad_medida` varchar(5) NOT NULL,
+  `cantidad` decimal(10,4) NOT NULL,
+   `precio` decimal(10,4) NOT NULL,
+  `subtotal` decimal(10,4) NOT NULL,
+  `fecha_registro` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `fk_producto_compra_idx` (`id_producto`),
+  CONSTRAINT `fk_producto_id_notacompra` FOREIGN KEY (`id_producto`) REFERENCES `productos` (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=latin1;

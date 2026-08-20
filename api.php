@@ -1655,8 +1655,8 @@ $app->post('/kardex', function (Request $request, Response $response) use ($pdo)
                 m.id DESC
         ";
 
-        print_r($sqlDetalle);
-        die();
+        //print_r($sqlDetalle);
+        //die();
         $stmtDetalle = $pdo->prepare($sqlDetalle);
         $stmtDetalle->execute($detalleParams);
 
@@ -3340,13 +3340,13 @@ $app->post('/nota-credito-compra', function (
     $j = json_decode($request->getBody()->getContents(), true);
 
     $data    = json_decode($j['json']);
-    $detalle = json_decode($j['detalle']);
+    //print_r(json_encode($data));
+    //die();
+    $detalle = $data->detalleVenta;
+
 
     $fecha = substr($data->fecha, 0, 10);
 
-    $pendiente = ($data->montopendiente < 0)
-        ? 0
-        : $data->montopendiente;
 
     try {
 
@@ -3359,27 +3359,18 @@ $app->post('/nota-credito-compra', function (
         */
 
         $stmt = $pdo->prepare("CALL p_nota_credito_compra(
-            ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
-        )");
+            ?,?,?,?,?,?,?,?,?)");
 
         $stmt->execute([
-
-            $data->usuario,
-            $data->seriedoc,
-            $data->nrodocumento,
-            $data->idCompra,
+            $data->id,
+            $data->id_proveedor,
             $data->motivo,
+            $data->id_sucursal,
+            $data->valor_neto,
             $fecha,
-            $data->proveedor,
-            $data->sucursal,
-            $data->entrega,
             $data->tipoDoc,
-            $data->neto,
-            $data->total,
-            $pendiente,
-            ($data->total-$data->neto),
-            $data->comentario
-
+            $data->observacion,
+            $data->nombre
         ]);
 
         $stmt->closeCursor();
@@ -3405,6 +3396,7 @@ $app->post('/nota-credito-compra', function (
 
         foreach($detalle as $item){
 
+             if($item->pendiente>0)   {
             $stmtDet = $pdo->prepare("
                 CALL p_nota_credito_detalle(
                     ?,?,?,?,?,?,?,?,?
@@ -3419,7 +3411,7 @@ $app->post('/nota-credito-compra', function (
                 $item->codigo,
                 '',
                 $item->cantidad,
-                $item->pendiente,
+                $item->cantidad,
                 $item->descuento,
                 $item->precio
 
@@ -3443,7 +3435,7 @@ $app->post('/nota-credito-compra', function (
 
             $stmtStock->execute([
                 $item->id,
-                $data->sucursal
+                $data->id_sucursal
             ]);
 
             $stock = $stmtStock->fetch(PDO::FETCH_OBJ);
@@ -3496,7 +3488,7 @@ $app->post('/nota-credito-compra', function (
 
                 $item->id,
 
-                $data->sucursal
+                $data->id_sucursal
 
             ]);
 
@@ -3520,7 +3512,7 @@ $app->post('/nota-credito-compra', function (
 
                 $item->id,
 
-                $idNota,
+                $data->id,
 
                 'Salida',
 
@@ -3528,19 +3520,19 @@ $app->post('/nota-credito-compra', function (
 
                 $item->precio,
 
-                $data->usuario,
+                $data->nombre,
 
-                $data->sucursal,
+                $data->id_sucursal,
 
-                'Nota Crédito Compra Nº '.$idNota.
-                ' Compra Nº '.$data->idCompra.
-                ' Serie '.$data->seriedoc.
-                ' Documento '.$data->nrodocumento
+                'Nota Crédito Compra Nº '.$data->id.
+                ' Compra Nº '.$data->id.
+                ' Serie '.$data->tipoDoc.
+                ' Documento '.$data->serie_documento
 
             ]);
 
             $stmtMov->closeCursor();
-
+        }
         }
 
         /*
@@ -3549,7 +3541,7 @@ $app->post('/nota-credito-compra', function (
         =======================================
         */
 
-        $stmtCompra = $pdo->prepare("
+      /*  $stmtCompra = $pdo->prepare("
 
             UPDATE compras
 
@@ -3579,15 +3571,15 @@ $app->post('/nota-credito-compra', function (
 
         $stmtCompra->execute([
 
-            ':total'=>$data->total,
+            ':total'=>$data->valor_total,
 
-            ':neto'=>$data->neto,
+            ':neto'=>$data->valor_total,
 
-            ':igv'=>($data->total-$data->neto),
+            ':igv'=>($data->valor_total),
 
-            ':pendiente'=>$pendiente,
+            ':pendiente'=>$data->pendiente,
 
-            ':id'=>$data->idCompra
+            ':id'=>$data->id_compra
 
         ]);
 

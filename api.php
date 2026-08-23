@@ -3294,9 +3294,9 @@ $app->get('/pagos-compra/{id}', function (Request $request, Response $response, 
 
     $id = $args['id'];
 
-    $sql = "SELECT p.*, tp.nombre, c.nombre AS caja
+    $sql = "SELECT p.*, c.nombre AS caja
             FROM compra_pagos p
-            INNER JOIN tipoPago tp ON p.tipoPago = tp.id
+
             INNER JOIN cajas c ON p.cuentaPago = c.id
             WHERE p.id_compra = :id";
 

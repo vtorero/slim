@@ -81,3 +81,41 @@ precio,subtotal)
 VALUES(p_id_nota,p_id_compra,p_id_producto,p_id_inventario,p_codigo,p_unidad,p_cantidad,p_precio,(p_precio*p_cantidad));
 END$$
 DELIMITER ;
+
+
+/*detalle nota*/
+
+SELECT
+    dc.id,
+    dc.id_producto,
+	nombre,
+    dc.codigo,
+    dc.cantidad,
+    dc.precio,
+
+    IFNULL(nc.devuelto,0) AS devuelto,
+
+    dc.cantidad - IFNULL(nc.devuelto,0) AS pendiente
+
+FROM compra_detalle dc
+
+LEFT JOIN
+(
+    SELECT
+        nc.id_compra,
+        dnc.id_producto,
+        pr.nombre,
+        SUM(dnc.cantidad) AS devuelto
+    FROM notacreditos nc
+    INNER JOIN detalle_nota_credito_compra dnc
+        ON dnc.id_nota_credito = nc.id
+	INNER JOIN productos pr ON pr.id=dnc.id_producto
+    GROUP BY
+        nc.id_compra,
+        dnc.id_producto,
+        pr.nombre
+) nc
+ON dc.id_compra = nc.id_compra
+AND dc.id_producto = nc.id_producto
+
+WHERE dc.id_compra = 271;

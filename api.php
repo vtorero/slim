@@ -3270,6 +3270,60 @@ $app->post('/observacion', function (Request $request, Response $response) use (
 });
 
 
+$app->get('/nota-detalle/{id}', function (Request $request, Response $response, $args) use ($pdo) {
+
+    $id = $args['id'];
+
+    $sql = "SELECT
+    dc.id,
+    dc.id_producto,
+    dc.id_inventario,
+    pr.unidad as unidad_medida,
+	pr.nombre,
+    dc.codigo,
+    dc.cantidad,
+    dc.precio,
+    dc.cantidad*dc.precio as subtotal,
+
+    IFNULL(nc.devuelto,0) AS devuelto,
+
+    dc.cantidad - IFNULL(nc.devuelto,0) AS pendiente
+
+FROM compra_detalle dc
+INNER JOIN productos pr
+    ON pr.id = dc.id_producto
+
+LEFT JOIN
+(
+    SELECT
+        nc.id_compra,
+        dnc.id_producto,
+        SUM(dnc.cantidad) AS devuelto
+    FROM notacreditos nc
+    INNER JOIN detalle_nota_credito_compra dnc
+        ON dnc.id_nota_credito = nc.id
+	   GROUP BY
+        nc.id_compra,
+        dnc.id_producto
+
+) nc
+ON dc.id_compra = nc.id_compra
+AND dc.id_producto = nc.id_producto
+
+WHERE dc.id_compra = :id";
+
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute([':id' => $id]);
+
+    $prods = $stmt->fetchAll();
+
+    $response->getBody()->write(json_encode($prods));
+
+    return $response->withHeader('Content-Type', 'application/json');
+});
+
+
+
 $app->get('/compra/{id}', function (Request $request, Response $response, $args) use ($pdo) {
 
     $id = $args['id'];
@@ -3396,9 +3450,10 @@ $app->post('/nota-credito-compra', function (
     $totalNota = 0;
         foreach($detalle as $item){
 
-             if($item->pendiente>0)   {
 
-                $subtotal = ($item->pendiente * $item->precio);
+             if($item->devuelto >0)   {
+
+                $subtotal = ($item->devuelto * $item->precio);
                 $totalNota += $subtotal;
 
             $stmtDet = $pdo->prepare("
@@ -3414,9 +3469,9 @@ $app->post('/nota-credito-compra', function (
                 $item->id_inventario,
                 $item->codigo,
                 $item->unidad_medida,
+                $item->devuelto,
                 $item->pendiente,
-                $item->pendiente,
-                $item->descuento,
+                0,
                 $item->precio
 
             ]);

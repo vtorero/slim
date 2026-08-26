@@ -119,3 +119,49 @@ ON dc.id_compra = nc.id_compra
 AND dc.id_producto = nc.id_producto
 
 WHERE dc.id_compra = 271;
+
+/*nuevos tipos de documento*/
+
+CREATE TABLE tipo_documento (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    codigo VARCHAR(2) NOT NULL UNIQUE,
+    nombre VARCHAR(100) NOT NULL,
+    serie VARCHAR(10) NOT NULL,
+    correlativo INT NOT NULL DEFAULT 1,
+    afecta_stock TINYINT(1) NOT NULL DEFAULT 0,
+    afecta_caja TINYINT(1) NOT NULL DEFAULT 1,
+    activo TINYINT(1) NOT NULL DEFAULT 1
+);
+
+INSERT INTO tipo_documento
+(codigo, nombre, serie, correlativo, afecta_stock, afecta_caja, activo)
+VALUES
+
+('01','FACTURA','F001',1,1,1,1),
+
+('03','BOLETA DE VENTA','B001',1,1,1,1),
+
+('02','RECIBO POR HONORARIOS','RH001',1,0,1,1),
+
+('14','RECIBO POR SERVICIOS','RS001',1,0,1,1),
+
+('07','NOTA DE CRÉDITO','FC001',1,1,1,1),
+
+('08','NOTA DE DÉBITO','FD001',1,0,1,1),
+
+('30','OTROS DOCUMENTOS AUTORIZADOS','OD001',1,0,1,1),
+
+('40','DEVOLUCIÓN','DV001',1,1,1,1),
+
+('00','TICKET INTERNO','T001',1,1,1,1);
+
+
+ALTER TABLE tipo_documento
+ADD COLUMN tipo ENUM('VENTA','COMPRA','AJUSTE','TESORERIA') NOT NULL DEFAULT 'VENTA';
+
+
+
+
+UPDATE tipo_documento SET tipo='VENTA' WHERE codigo IN ('00','01','03');
+UPDATE tipo_documento SET tipo='AJUSTE' WHERE codigo IN ('07','08','40');
+UPDATE tipo_documento SET tipo='TESORERIA' WHERE codigo IN ('02','14','30');

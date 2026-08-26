@@ -3348,12 +3348,41 @@ $app->get('/pagos-compra/{id}', function (Request $request, Response $response, 
 
     $id = $args['id'];
 
-    $sql = "SELECT p.*, c.nombre AS caja
-            FROM compra_pagos p
+    $sql = "SELECT
+    p.id,
+    'PAGO' AS tipo,
+    c.nombre AS caja,
+    p.numero_operacion,
+    p.monto,
+    p.monto_pendiente,
+    p.fecha_registro
+FROM compra_pagos p
+INNER JOIN cajas c
+    ON c.id = p.cuentaPago
+WHERE p.id_compra =:id
 
+UNION ALL
+
+SELECT
+    d.id,
+    'NOTA CRÉDITO' AS tipo,
+    '' AS caja,
+    CONCAT('NC:', d.id_nota_credito) AS numero_operacion,
+    -SUM(d.subtotal) AS monto,
+    0 as monto_pendiente,
+    MAX(d.fecha_registro) AS fecha
+FROM detalle_nota_credito_compra d
+INNER JOIN notacreditos n
+    ON n.id = d.id_nota_credito
+WHERE n.id_compra = :id
+GROUP BY d.id_nota_credito";
+
+/*
+SELECT p.*, c.nombre AS caja
+            FROM compra_pagos p
             INNER JOIN cajas c ON p.cuentaPago = c.id
             WHERE p.id_compra = :id";
-
+*/
     $stmt = $pdo->prepare($sql);
     $stmt->execute([':id' => $id]);
 

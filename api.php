@@ -5906,4 +5906,51 @@ $app->post('/actualiza-pendiente-compra', function (
 });
 
 
+$app->get('/tipo-documento', function ($request, $response) use ($pdo) {
+
+    $params = $request->getQueryParams();
+    $tipo = $params['tipo'] ?? null;
+
+    if (!$tipo) {
+        $response->getBody()->write(json_encode([
+            'success' => false,
+            'message' => 'El parámetro tipo es obligatorio'
+        ]));
+
+        return $response
+            ->withStatus(400)
+            ->withHeader('Content-Type', 'application/json');
+    }
+
+    if ($tipo=='todos'){
+
+    $sql = "
+        SELECT *
+        FROM erp.tipo_documento
+    ";
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute();
+}else{
+    $sql = "
+        SELECT *
+        FROM erp.tipo_documento
+        WHERE tipo = :tipo
+    ";
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute([
+        ':tipo' => $tipo
+    ]);
+}
+
+
+    $data = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $response->getBody()->write(json_encode([
+        'success' => true,
+        'data' => $data
+    ]));
+
+    return $response->withHeader('Content-Type', 'application/json');
+});
+
 $app->run();

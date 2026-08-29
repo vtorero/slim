@@ -755,6 +755,168 @@ $app->post('/exportarclientes', function (Request $request, Response $response) 
 });
 
 
+$app->get('/declaracion/{id}', function (Request $request, Response $response, $args) use ($pdo) {
+
+    $id = $args['id'];
+
+    $sql = "SELECT a.nombre,a.unidad, d.*,c.razon_social as cliente,c.num_documento,
+                   v.*,pa.*,'',s.direccion,s.email,
+                   s.nombre as local,s.telefono
+            FROM compra_detalle d
+            INNER JOIN productos a ON a.id=d.id_producto
+            INNER JOIN compras v ON d.id_compra=v.id
+            INNER JOIN proveedores c ON v.id_proveedor=c.id
+            INNER JOIN compra_pagos pa ON v.id=pa.id_compra
+            INNER JOIN sucursales s ON s.id=v.id_sucursal
+            WHERE v.id =:id";
+
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute([':id' => $id]);
+
+    $prods = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    if (!$prods) {
+        $response->getBody()->write("No hay datos");
+        return $response->withStatus(404);
+    }
+
+    // ================= PDF =================
+    $pdf = new \FPDF();
+    $pdf->AddPage();
+    $pdf->SetFont('Arial','',12);
+
+    $pageWidth = $pdf->GetPageWidth();
+    $imgWidth = 90;
+    $x = ($pageWidth - $imgWidth) / 2;
+
+  //  $pdf->Image('logo.png', $x, 10, $imgWidth);
+    //$pdf->Ln(34);
+
+    $pdf->SetFont('Arial','B',20);
+    $pdf->Cell(0,6,'DECLARACION JURADA DE GASTOS',0,1,'L');
+    $pdf->Ln(14);
+    $pdf->SetFont('Arial','',17);
+    if($prods[0]['local']!="C.J.M"){
+        $pdf->Cell(0,6,'FERRETERIA Y MATERIALES DE CONSTRUCCION LAS',0,1,'L');
+        $pdf->Cell(0,10,'HERMANITAS E.I.R.L.',0,1,'L');
+    }else{
+       // $pdf->Cell(0,6,$prods[0]['local'],0,1,'L');
+    }
+    $pdf->SetFont('Arial','',17);
+    //$pdf->Cell(0,8,'Whatsap/Telefono: '.$prods[0]['telefono'],0,1,' L');
+    //$pdf->Cell(0,8,$prods[0]['email'],0,1,'C');
+    $pdf->Cell(0,8,$prods[0]['direccion'],0,1,'L');
+    $pdf->Cell(0,8,'- Lima - Lima',0,1,'L');
+
+    $pdf->SetFont('Arial','B',16);
+    $pdf->Cell(0,8,'RUC: 20537929520',0,1,' L');
+    $pdf->Cell(0,8,'TICKET NRO:'.$prods[0]['id_compra'],0,1,'L');
+    $pdf->Cell(0,6,$prods[0]['local'],0,1,'L');
+
+    $pdf->Ln(10);
+    $pdf->SetFont('Arial','B',16);
+    $pdf->Cell(0,8,'ADQUIRIENTE',0,1,'L');
+
+    $pdf->SetFont('Arial','',15);
+    $pdf->Cell(0,8,$prods[0]['cliente'],0,1,'L');
+    $pdf->Cell(0,8,'DOC:'.$prods[0]['num_documento'],0,1,'L');
+
+    $pdf->Ln(10);
+    $pdf->SetFont('Arial','',14);
+    $pdf->Cell(0,8,'------------------------------------------------------------------------------------------------------------------',0,1,'L');
+    $pdf->Cell(0,8,'NOMBRES Y APELLIDO:',0,1,'L');
+    $pdf->Cell(0,8,'DOCUMENTO:',0,1,'L');
+    $pdf->Cell(0,8,'FECHA: ___/___/______',0,1,'L');
+    $pdf->Ln(10);
+    $pdf->SetFont('Arial','',14);
+    $pdf->Cell(0,8,'DETALLE DE GASTO',0,1,'L');
+    $pdf->Cell(0,8,'DESCRIPCION',0,1,'L');
+    $pdf->Cell(0,8,'------------------------------------------------------------------------------------------------------------------',0,1,'L');
+    $pdf->Ln(5);
+    $pdf->Cell(0,8,'------------------------------------------------------------------------------------------------------------------',0,1,'L');
+    $pdf->Ln(5);
+    $pdf->Cell(0,8,'------------------------------------------------------------------------------------------------------------------',0,1,'L');
+    $pdf->Ln(5);
+    $pdf->SetFont('Arial','',17);
+    //$pdf->Cell(0,8,'FORMA PAGO:'.strtoupper($prods[0]['tipo']),0,1,'L');
+
+    // ENCABEZADO
+    /*$pdf->SetFont('Arial','B',14);
+    $pdf->Cell(85,10,'DESCRIPCION',0,0,'L');
+    $pdf->Cell(30,10,'CANTIDAD',0,0,'C');
+    $pdf->Cell(20,10,'U.M',0,0,'C');
+    $pdf->Cell(30,10,'PRECIO',0,0,'C');
+    $pdf->Cell(30,10,'IMPORTE',0,1,'C');
+
+    $pdf->Cell(150,2,str_repeat('-',100),0,1);
+    $pdf->Ln();
+
+    // DETALLE
+    $pdf->SetFont('Arial','',13);
+
+    foreach ($prods as $prod) {
+        $pdf->Cell(130,6,$prod['nombre'],0,1);
+        $pdf->Cell(95,6,'',0,0);
+        $pdf->Cell(30,6,round($prod['cantidad'],2),0,0);
+        $pdf->Cell(20,6,$prod['unidad'],0,0);
+        $pdf->Cell(28,6,round($prod['precio'],2),0,0);
+        $pdf->Cell(28,6,round($prod['subtotal'],2),0,1);
+    }
+
+    $pdf->Ln();
+    $pdf->Cell(150,2,str_repeat('-',100),0,1);
+    $pdf->Ln();
+*/
+$pdf->SetFont('Arial','',15);
+    $pdf->Cell(20,8,'IMPORTE S/'.$prods[0]['valor_total'],0,1,'L');
+    $pdf->Cell(0,8,'--------------------------------------------------------------------------------------------------------',0,1,'L');
+    $pdf->Ln(5);
+    $pdf->Cell(0,8,'DECLARACION',0,1,'L');
+        $pdf->Cell(0,8,'Declaro bajo juramento que el gasto realizado corresponde a actividades
+    ',0,1,'L');
+    $pdf->Cell(0,8,'laborales y no cuento con comprobante de pago.
+    ',0,1,'L');
+
+    //$pdf->SetFont('Arial','B',16);
+    //$pdf->Cell(40,8,'TOTAL S/',0,0,'R');
+    $pdf->Ln(55);
+    $pdf->Cell(0,15,'-----------------------------------------',0,1,'L');
+    $pdf->Cell(0,1,'APROBACION',0,1,'L');
+    $pdf->Ln(20);
+
+    $pdf->Cell(0,8,'AUTORIZADO POR',0,1,'L');
+    $pdf->Cell(0,20,'-----------------------------------------',0,1,'L');
+    $pdf->Ln(10);
+
+    $pdf->Cell(0,8,'FIRMA TRABAJADOR',0,1,'L');
+    $pdf->Cell(0,20,'-----------------------------------------',0,1,'L');
+    $pdf->Ln(10);
+
+    $pdf->SetFont('Arial','',14);
+    $cantidad = numeroALetras($prods[0]['valor_total']);
+
+    $pdf->SetFont('Arial','',17);
+    $pdf->Cell(0,8,$cantidad,0,1,'L');
+
+    //$pdf->Cell(150,2,str_repeat('-',100),0,1);
+    //$pdf->Cell(35,14,strtoupper($prods[0]['tipo']),0,0,'L');
+
+    $pdf->SetFont('Arial','',14);
+    //$pdf->Cell(20,14,'S/ '.$prods[0]['valor_total'],0,1,'L');
+
+   // $pdf->Cell(150,2,str_repeat('-',100),0,1);
+
+    // 🔥 RESPUESTA CORRECTA
+    $pdfContent = $pdf->Output('S');
+
+    $response->getBody()->write($pdfContent);
+
+    return $response
+        ->withHeader('Content-Type', 'application/pdf')
+        ->withHeader('Content-Disposition', 'inline; filename="reporte.pdf"');
+});
+
+
 
 $app->get('/boleta/{id}', function (Request $request, Response $response, $args) use ($pdo) {
 

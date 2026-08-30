@@ -15,6 +15,8 @@ use Psr\Http\Message\ServerRequestInterface as Request;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use PhpOffice\PhpSpreadsheet\Cell\DataType;
+use PhpOffice\PhpSpreadsheet\IOFactory;
+use PhpOffice\PhpSpreadsheet\Shared\Date;
 use Dompdf\Dompdf;
 use Slim\Factory\AppFactory;
 
@@ -1534,5 +1536,725 @@ function filterData(&$str){
     $str = preg_replace("/\r?\n/", "\\n", $str);
     if(strstr($str, '"')) $str = '"' . str_replace('"', '""', $str) . '"';
 }
+
+
+/*IMPORTAR COMPRAS*/
+
+$app->post('/importar-compras', function (
+    Request $request,
+    Response $response
+) use ($pdo) {
+
+    try {
+
+        /*
+        ============================================================
+        1. RECIBIR JSON DESDE ANGULAR
+        ============================================================
+        */
+
+        //$data = $request->getParsedBody();
+        $data = json_decode($request->getBody()->getContents());
+
+        $data = json_decode(
+            json_encode($data),
+            true
+        );
+
+       /* if (!is_array($data)) {
+
+            throw new Exception(
+                'El cuerpo de la petición no es un JSON válido'
+            );
+        }*/
+
+
+        /*
+        ============================================================
+        2. OBTENER PRODUCTOS
+        ============================================================
+        */
+
+        $filas = $data['productos'] ?? [];
+
+        if (!is_array($filas) || count($filas) === 0) {
+
+            throw new Exception(
+                'No se recibieron productos'
+            );
+        }
+
+
+        /*
+        ============================================================
+        3. AGRUPAR LAS FILAS POR COMPROBANTE
+        ============================================================
+
+        Una factura puede tener:
+
+        RUC + SERIE + NUMERO
+                  |
+                  +-- Producto 1
+                  +-- Producto 2
+                  +-- Producto 3
+
+        Por lo tanto solamente tendremos una cabecera.
+        */
+
+
+        $compras = [];
+
+
+        foreach ($filas as $indice => $fila) {
+
+            $filaExcel = $indice + 2;
+
+
+            /*
+            ========================================================
+            LEER COLUMNAS
+            ========================================================
+            */
+
+            $comprobante = trim(
+                (string)($fila['COMPROBANTE'] ?? '')
+            );
+
+            $codCpe = trim(
+                (string)($fila['COD.CPE'] ?? '')
+            );
+
+            $moneda = trim(
+                (string)($fila['MONEDA'] ?? '')
+            );
+
+            $fecha = $fila['FECHA EMISION'] ?? '';
+
+            $ruc = trim(
+                (string)($fila['RUC'] ?? '')
+            );
+
+            /*
+             * Ajusta este nombre si en tu Excel el encabezado
+             * tiene otro nombre.
+             */
+            $proveedor = trim(
+                (string)(
+                    $fila['RAZON SOCIAL'] ??
+                    $fila['SOCIAL DEL EMISOR'] ??
+                    $fila['PROVEEDOR'] ??
+                    ''
+                )
+            );
+
+            $serie = trim(
+                (string)($fila['SERIE'] ?? '')
+            );
+
+            $numero = trim(
+                (string)(
+                    $fila['NÚMERO'] ??
+                    $fila['NUMERO'] ??
+                    ''
+                )
+            );
+
+            $cantidad = $fila['CANTIDAD'] ?? 0;
+
+            $unidad = trim(
+                (string)($fila['UNIDAD'] ?? '')
+            );
+
+            $codigo = trim(
+                (string)($fila['CODIGO'] ?? '')
+            );
+
+            $descripcion = trim(
+                (string)($fila['DESCRIPCION'] ?? '')
+            );
+
+            $precio = $fila['PRECIOCIGV'] ?? 0;
+
+            $totalProducto =
+                $fila['TOTAL DE PRODUCTO'] ?? 0;
+
+            $observacion = trim(
+                (string)($fila['OBSERVACION'] ?? '')
+            );
+
+
+            /*
+            ========================================================
+            IGNORAR FILA VACÍA
+            ========================================================
+            */
+
+            if (
+                $comprobante === '' &&
+                $ruc === '' &&
+                $serie === '' &&
+                $numero === ''
+            ) {
+                continue;
+            }
+
+
+            /*
+            ========================================================
+            VALIDAR DATOS MÍNIMOS
+            ========================================================
+            */
+
+            if ($ruc === '') {
+
+                throw new Exception(
+                    "Fila {$filaExcel}: falta RUC"
+                );
+            }
+
+           /* if ($serie === '') {
+
+                throw new Exception(
+                    "Fila {$filaExcel}: falta serie"
+                );
+            }*/
+
+          /*  if ($numero === '') {
+
+                throw new Exception(
+                    "Fila {$filaExcel}: falta número"
+                );
+            }
+*/
+
+            /*
+            ========================================================
+            FECHA
+            ========================================================
+            */
+
+            if ($fecha !== null && $fecha !== '') {
+
+                if (is_numeric($fecha)) {
+
+                    /*
+                     * Fecha serial de Excel
+                     */
+                    $fecha = \PhpOffice\PhpSpreadsheet\Shared\Date
+                        ::excelToDateTimeObject($fecha)
+                        ->format('Y-m-d');
+
+                } else {
+
+                    $fecha = trim((string)$fecha);
+
+                    /*
+                     * 04/02/2026
+                     */
+                    if (preg_match(
+                        '/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/',
+                        $fecha,
+                        $m
+                    )) {
+
+                        $fecha = sprintf(
+                            '%04d-%02d-%02d',
+                            $m[3],
+                            $m[2],
+                            $m[1]
+                        );
+                    }
+                }
+
+            } else {
+
+                $fecha = null;
+            }
+
+
+            /*
+            ========================================================
+            CONVERTIR NÚMEROS
+            ========================================================
+            */
+
+            if (is_string($cantidad)) {
+                $cantidad = str_replace(
+                    ',',
+                    '',
+                    $cantidad
+                );
+            }
+
+            if (is_string($precio)) {
+                $precio = str_replace(
+                    ',',
+                    '',
+                    $precio
+                );
+            }
+
+            if (is_string($totalProducto)) {
+                $totalProducto = str_replace(
+                    ',',
+                    '',
+                    $totalProducto
+                );
+            }
+
+
+            $cantidad = (float)$cantidad;
+
+            $precio = (float)$precio;
+
+            $totalProducto = (float)$totalProducto;
+
+
+            /*
+            ========================================================
+            CLAVE ÚNICA DE LA COMPRA
+            ========================================================
+            */
+
+            $clave =
+                $ruc .
+                '|' .
+                strtoupper($serie) .
+                '|' .
+                $numero;
+
+
+            /*
+            ========================================================
+            CREAR CABECERA
+            ========================================================
+            */
+
+            if (!isset($compras[$clave])) {
+
+                $compras[$clave] = [
+
+                    'comprobante' =>
+                        $comprobante,
+
+                    'cod_cpe' =>
+                        $codCpe,
+
+                    'moneda' =>
+                        $moneda,
+
+                    'fecha' =>
+                        $fecha,
+
+                    'ruc' =>
+                        $ruc,
+
+                    'proveedor' =>
+                        $proveedor,
+
+                    'serie' =>
+                        $serie,
+
+                    'numero' =>
+                        $numero,
+
+                    'detalles' =>
+                        []
+
+                ];
+            }
+
+
+            /*
+            ========================================================
+            AGREGAR DETALLE
+            ========================================================
+            */
+
+            $compras[$clave]['detalles'][] = [
+
+                'cantidad' =>
+                    $cantidad,
+
+                'unidad' =>
+                    $unidad,
+
+                'codigo' =>
+                    $codigo,
+
+                'descripcion' =>
+                    $descripcion,
+
+                'precio' =>
+                    $precio,
+
+                'total' =>
+                    $totalProducto,
+
+                'observacion' =>
+                    $observacion
+
+            ];
+        }
+
+
+        /*
+        ============================================================
+        4. INICIAR TRANSACCIÓN
+        ============================================================
+        */
+
+        $pdo->beginTransaction();
+
+
+        /*
+        ============================================================
+        5. PREPARAR VERIFICACIÓN DE DUPLICADOS
+        ============================================================
+        */
+
+        $stmtExiste = $pdo->prepare("
+            SELECT id
+            FROM compras
+            WHERE ruc = :ruc
+              AND serie = :serie
+              AND numero = :numero
+            LIMIT 1
+        ");
+
+
+        /*
+        ============================================================
+        6. PREPARAR INSERT COMPRA
+        ============================================================
+        */
+
+        $stmtCompra = $pdo->prepare("
+            INSERT INTO compras
+            (
+                comprobante,
+                cod_cpe,
+                moneda,
+                fecha,
+                ruc,
+                proveedor,
+                serie,
+                numero,
+                total
+            )
+            VALUES
+            (
+                :comprobante,
+                :cod_cpe,
+                :moneda,
+                :fecha,
+                :ruc,
+                :proveedor,
+                :serie,
+                :numero,
+                :total
+            )
+        ");
+
+
+        /*
+        ============================================================
+        7. PREPARAR INSERT DETALLE
+        ============================================================
+        */
+
+        $stmtDetalle = $pdo->prepare("
+            INSERT INTO compras_detalle
+            (
+                compra_id,
+                cantidad,
+                unidad,
+                codigo,
+                descripcion,
+                precio,
+                total,
+                observacion
+            )
+            VALUES
+            (
+                :compra_id,
+                :cantidad,
+                :unidad,
+                :codigo,
+                :descripcion,
+                :precio,
+                :total,
+                :observacion
+            )
+        ");
+
+
+        /*
+        ============================================================
+        CONTADORES
+        ============================================================
+        */
+
+        $comprasInsertadas = 0;
+
+        $detallesInsertados = 0;
+
+        $duplicadas = 0;
+
+
+        /*
+        ============================================================
+        8. INSERTAR COMPRAS
+        ============================================================
+        */
+
+        foreach ($compras as $compra) {
+
+
+            /*
+            --------------------------------------------------------
+            VERIFICAR SI YA EXISTE
+            --------------------------------------------------------
+            */
+
+            $stmtExiste->execute([
+
+                ':ruc' =>
+                    $compra['ruc'],
+
+                ':serie' =>
+                    $compra['serie'],
+
+                ':numero' =>
+                    $compra['numero']
+
+            ]);
+
+
+            $existente =
+                $stmtExiste->fetch(
+                    PDO::FETCH_ASSOC
+                );
+
+
+            if ($existente) {
+
+                $duplicadas++;
+
+                continue;
+            }
+
+
+            /*
+            --------------------------------------------------------
+            CALCULAR TOTAL DE LA COMPRA
+            --------------------------------------------------------
+            */
+
+            $totalCompra = 0;
+
+            foreach (
+                $compra['detalles']
+                as $detalle
+            ) {
+
+                $totalCompra +=
+                    $detalle['total'];
+            }
+
+
+            /*
+            --------------------------------------------------------
+            INSERTAR CABECERA
+            --------------------------------------------------------
+            */
+
+            $stmtCompra->execute([
+
+                ':comprobante' =>
+                    $compra['comprobante'],
+
+                ':cod_cpe' =>
+                    $compra['cod_cpe'],
+
+                ':moneda' =>
+                    $compra['moneda'],
+
+                ':fecha' =>
+                    $compra['fecha'],
+
+                ':ruc' =>
+                    $compra['ruc'],
+
+                ':proveedor' =>
+                    $compra['proveedor'],
+
+                ':serie' =>
+                    $compra['serie'],
+
+                ':numero' =>
+                    $compra['numero'],
+
+                ':total' =>
+                    $totalCompra
+
+            ]);
+
+
+            /*
+            --------------------------------------------------------
+            ID DE LA COMPRA
+            --------------------------------------------------------
+            */
+
+            $compraId =
+                $pdo->lastInsertId();
+
+
+            $comprasInsertadas++;
+
+
+            /*
+            --------------------------------------------------------
+            INSERTAR DETALLES
+            --------------------------------------------------------
+            */
+
+            foreach (
+                $compra['detalles']
+                as $detalle
+            ) {
+
+                $stmtDetalle->execute([
+
+                    ':compra_id' =>
+                        $compraId,
+
+                    ':cantidad' =>
+                        $detalle['cantidad'],
+
+                    ':unidad' =>
+                        $detalle['unidad'],
+
+                    ':codigo' =>
+                        $detalle['codigo'],
+
+                    ':descripcion' =>
+                        $detalle['descripcion'],
+
+                    ':precio' =>
+                        $detalle['precio'],
+
+                    ':total' =>
+                        $detalle['total'],
+
+                    ':observacion' =>
+                        $detalle['observacion']
+
+                ]);
+
+                $detallesInsertados++;
+            }
+        }
+
+
+        /*
+        ============================================================
+        9. CONFIRMAR TRANSACCIÓN
+        ============================================================
+        */
+
+        $pdo->commit();
+
+
+        /*
+        ============================================================
+        10. RESPUESTA
+        ============================================================
+        */
+
+        $resultado = [
+
+            'success' => true,
+
+            'message' =>
+                'Importación realizada correctamente',
+
+            'filas_recibidas' =>
+                count($filas),
+
+            'compras_encontradas' =>
+                count($compras),
+
+            'compras_insertadas' =>
+                $comprasInsertadas,
+
+            'detalles_insertados' =>
+                $detallesInsertados,
+
+            'compras_duplicadas' =>
+                $duplicadas
+
+        ];
+
+
+        $response->getBody()->write(
+            json_encode(
+                $resultado,
+                JSON_UNESCAPED_UNICODE
+            )
+        );
+
+
+        return $response
+            ->withHeader(
+                'Content-Type',
+                'application/json'
+            );
+
+
+    } catch (Throwable $e) {
+
+
+        /*
+        ============================================================
+        ROLLBACK
+        ============================================================
+        */
+
+        if (
+            isset($pdo) &&
+            $pdo->inTransaction()
+        ) {
+
+            $pdo->rollBack();
+        }
+
+
+        /*
+        ============================================================
+        ERROR
+        ============================================================
+        */
+
+        $response->getBody()->write(
+            json_encode(
+                [
+                    'success' => false,
+                    'message' => $e->getMessage()
+                ],
+                JSON_UNESCAPED_UNICODE
+            )
+        );
+
+
+        return $response
+            ->withStatus(500)
+            ->withHeader(
+                'Content-Type',
+                'application/json'
+            );
+    }
+});
 
 $app->run();

@@ -1553,25 +1553,51 @@ $app->post('/importar-compras', function (
         ============================================================
         */
 
-        //$data = $request->getParsedBody();
-        $data = json_decode($request->getBody()->getContents());
+        $json = $request->getBody()->getContents();
 
         $data = json_decode(
-            json_encode($data),
-            true
+            $json,
+            true,
+            512,
+            JSON_THROW_ON_ERROR
         );
 
-       /* if (!is_array($data)) {
-
+        if (!is_array($data)) {
             throw new Exception(
                 'El cuerpo de la petición no es un JSON válido'
             );
-        }*/
+        }
 
 
         /*
         ============================================================
-        2. OBTENER PRODUCTOS
+        2. USUARIO
+        ============================================================
+
+        Debe venir desde Angular:
+
+        {
+            "id_usuario": 1,
+            "productos": [...]
+        }
+
+        Lo ideal es obtenerlo desde el usuario autenticado.
+        */
+
+        $idUsuario = $data['id_usuario'] ?? 'admin';
+
+        if ($idUsuario === null || $idUsuario === '') {
+            throw new Exception(
+                'Falta id_usuario'
+            );
+        }
+
+        $idUsuario = (int)$idUsuario;
+
+
+        /*
+        ============================================================
+        3. OBTENER PRODUCTOS
         ============================================================
         */
 
@@ -1587,22 +1613,150 @@ $app->post('/importar-compras', function (
 
         /*
         ============================================================
-        3. AGRUPAR LAS FILAS POR COMPROBANTE
+        4. FUNCIONES AUXILIARES
         ============================================================
-
-        Una factura puede tener:
-
-        RUC + SERIE + NUMERO
-                  |
-                  +-- Producto 1
-                  +-- Producto 2
-                  +-- Producto 3
-
-        Por lo tanto solamente tendremos una cabecera.
         */
 
+        /*
+         * Convertir número proveniente de Excel/JSON.
+         */
+        $numeroDecimal = function ($valor) {
+
+            if ($valor === null || $valor === '') {
+                return 0;
+            }
+
+            if (is_numeric($valor)) {
+                return (float)$valor;
+            }
+
+            $valor = trim((string)$valor);
+
+            /*
+             * Detectar errores de Excel
+             * como #REF!, #VALUE!, etc.
+             */
+            if (
+                strpos($valor, '#REF!') !== false ||
+                strpos($valor, '#VALUE!') !== false ||
+                strpos($valor, '#N/A') !== false ||
+                strpos($valor, '#DIV/0!') !== false
+            ) {
+                throw new Exception(
+                    "Valor numérico inválido: {$valor}"
+                );
+            }
+
+            /*
+             * Si viene:
+             * 1,350.00
+             */
+            if (
+                strpos($valor, ',') !== false &&
+                strpos($valor, '.') !== false
+            ) {
+
+                $valor = str_replace(',', '', $valor);
+
+            /*
+             * Si viene:
+             * 1350,00
+             */
+            } elseif (
+                strpos($valor, ',') !== false &&
+                strpos($valor, '.') === false
+            ) {
+
+                $valor = str_replace(',', '.', $valor);
+            }
+
+            return (float)$valor;
+        };
+
+
+        /*
+         * Convertir fecha de Excel/JSON.
+         */
+        $convertirFecha = function ($fecha) {
+
+            if ($fecha === null || $fecha === '') {
+                return null;
+            }
+
+            /*
+             * Fecha serial de Excel
+             */
+            if (is_numeric($fecha)) {
+
+                return \PhpOffice\PhpSpreadsheet\Shared\Date
+                    ::excelToDateTimeObject($fecha)
+                    ->format('Y-m-d');
+            }
+
+            $fecha = trim((string)$fecha);
+
+            /*
+             * DD/MM/YYYY
+             */
+            if (
+                preg_match(
+                    '/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/',
+                    $fecha,
+                    $m
+                )
+            ) {
+
+                return sprintf(
+                    '%04d-%02d-%02d',
+                    $m[3],
+                    $m[2],
+                    $m[1]
+                );
+            }
+
+            /*
+             * YYYY-MM-DD
+             */
+            if (
+                preg_match(
+                    '/^\d{4}-\d{1,2}-\d{1,2}$/',
+                    $fecha
+                )
+            ) {
+
+                return date(
+                    'Y-m-d',
+                    strtotime($fecha)
+                );
+            }
+
+            throw new Exception(
+                "Fecha inválida: {$fecha}"
+            );
+        };
+
+
+        /*
+        ============================================================
+        5. AGRUPAR POR COMPROBANTE
+        ============================================================
+        */
 
         $compras = [];
+
+
+        /*
+        ============================================================
+        PREPARAR BÚSQUEDA DE PROVEEDOR
+        ============================================================
+        */
+
+        $stmtProveedor = $pdo->prepare("
+            SELECT id
+            FROM proveedores
+            WHERE num_documento = :ruc
+            LIMIT 1
+        ");
 
 
         foreach ($filas as $indice => $fila) {
@@ -1612,7 +1766,7 @@ $app->post('/importar-compras', function (
 
             /*
             ========================================================
-            LEER COLUMNAS
+            LEER EXCEL
             ========================================================
             */
 
@@ -1620,63 +1774,90 @@ $app->post('/importar-compras', function (
                 (string)($fila['COMPROBANTE'] ?? '')
             );
 
+
             $codCpe = trim(
                 (string)($fila['COD.CPE'] ?? '')
             );
+
 
             $moneda = trim(
                 (string)($fila['MONEDA'] ?? '')
             );
 
-            $fecha = $fila['FECHA EMISION'] ?? '';
+
+            /*
+             * Soporta ambos nombres.
+             */
+            $fechaExcel =
+                $fila['FECHA EMISION']
+                ?? $fila['FECHA EMISIO']
+                ?? '';
+
 
             $ruc = trim(
                 (string)($fila['RUC'] ?? '')
             );
 
+
             /*
-             * Ajusta este nombre si en tu Excel el encabezado
-             * tiene otro nombre.
+             * Nombre del proveedor solamente como referencia.
+             * No se inserta en compras porque esa tabla
+             * utiliza id_proveedor.
              */
             $proveedor = trim(
                 (string)(
-                    $fila['RAZON SOCIAL'] ??
-                    $fila['SOCIAL DEL EMISOR'] ??
-                    $fila['PROVEEDOR'] ??
-                    ''
+                    $fila['SOCIAL DEL EMISOR']
+                    ?? $fila['SOCIAL DE E']
+                    ?? $fila['RAZON SOCIAL']
+                    ?? $fila['PROVEEDOR']
+                    ?? ''
                 )
             );
+
 
             $serie = trim(
                 (string)($fila['SERIE'] ?? '')
             );
 
+
             $numero = trim(
                 (string)(
-                    $fila['NÚMERO'] ??
-                    $fila['NUMERO'] ??
-                    ''
+                    $fila['NÚMERO']
+                    ?? $fila['NUMERO']
+                    ?? ''
                 )
             );
 
-            $cantidad = $fila['CANTIDAD'] ?? 0;
+
+            $cantidad = $numeroDecimal(
+                $fila['CANTIDAD'] ?? 0
+            );
+
 
             $unidad = trim(
                 (string)($fila['UNIDAD'] ?? '')
             );
 
+
             $codigo = trim(
                 (string)($fila['CODIGO'] ?? '')
             );
+
 
             $descripcion = trim(
                 (string)($fila['DESCRIPCION'] ?? '')
             );
 
-            $precio = $fila['PRECIOCIGV'] ?? 0;
 
-            $totalProducto =
-                $fila['TOTAL DE PRODUCTO'] ?? 0;
+            $precio = $numeroDecimal(
+                $fila['PRECIOCIGV'] ?? 0
+            );
+
+
+            $totalProducto = $numeroDecimal(
+                $fila['TOTAL DE PRODUCTO'] ?? 0
+            );
+
 
             $observacion = trim(
                 (string)($fila['OBSERVACION'] ?? '')
@@ -1693,15 +1874,17 @@ $app->post('/importar-compras', function (
                 $comprobante === '' &&
                 $ruc === '' &&
                 $serie === '' &&
-                $numero === ''
+                $numero === '' &&
+                $codigo === ''
             ) {
+
                 continue;
             }
 
 
             /*
             ========================================================
-            VALIDAR DATOS MÍNIMOS
+            VALIDACIONES
             ========================================================
             */
 
@@ -1712,20 +1895,54 @@ $app->post('/importar-compras', function (
                 );
             }
 
-           /* if ($serie === '') {
+/*
+            if ($serie === '') {
 
                 throw new Exception(
-                    "Fila {$filaExcel}: falta serie"
-                );
-            }*/
-
-          /*  if ($numero === '') {
-
-                throw new Exception(
-                    "Fila {$filaExcel}: falta número"
+                    "Fila {$filaExcel}: falta SERIE"
                 );
             }
+
+
+            if ($numero === '') {
+
+                throw new Exception(
+                    "Fila {$filaExcel}: falta NÚMERO"
+                );
+            }
+
 */
+            if ($codigo === '') {
+
+                throw new Exception(
+                    "Fila {$filaExcel}: falta CODIGO"
+                );
+            }
+
+
+            if ($cantidad <= 0) {
+
+                throw new Exception(
+                    "Fila {$filaExcel}: cantidad inválida"
+                );
+            }
+
+
+            if ($precio < 0) {
+
+                throw new Exception(
+                    "Fila {$filaExcel}: precio inválido"
+                );
+            }
+
+
+            if ($totalProducto < 0) {
+
+                throw new Exception(
+                    "Fila {$filaExcel}: total de producto inválido"
+                );
+            }
+
 
             /*
             ========================================================
@@ -1733,86 +1950,38 @@ $app->post('/importar-compras', function (
             ========================================================
             */
 
-            if ($fecha !== null && $fecha !== '') {
-
-                if (is_numeric($fecha)) {
-
-                    /*
-                     * Fecha serial de Excel
-                     */
-                    $fecha = \PhpOffice\PhpSpreadsheet\Shared\Date
-                        ::excelToDateTimeObject($fecha)
-                        ->format('Y-m-d');
-
-                } else {
-
-                    $fecha = trim((string)$fecha);
-
-                    /*
-                     * 04/02/2026
-                     */
-                    if (preg_match(
-                        '/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/',
-                        $fecha,
-                        $m
-                    )) {
-
-                        $fecha = sprintf(
-                            '%04d-%02d-%02d',
-                            $m[3],
-                            $m[2],
-                            $m[1]
-                        );
-                    }
-                }
-
-            } else {
-
-                $fecha = null;
-            }
+            $fecha = $convertirFecha($fechaExcel);
 
 
             /*
             ========================================================
-            CONVERTIR NÚMEROS
+            BUSCAR PROVEEDOR
             ========================================================
             */
 
-            if (is_string($cantidad)) {
-                $cantidad = str_replace(
-                    ',',
-                    '',
-                    $cantidad
-                );
-            }
+            $stmtProveedor->execute([
+                ':ruc' => $ruc
+            ]);
 
-            if (is_string($precio)) {
-                $precio = str_replace(
-                    ',',
-                    '',
-                    $precio
-                );
-            }
+            $prov = $stmtProveedor->fetch(
+                PDO::FETCH_ASSOC
+            );
 
-            if (is_string($totalProducto)) {
-                $totalProducto = str_replace(
-                    ',',
-                    '',
-                    $totalProducto
+
+            if (!$prov) {
+
+                throw new Exception(
+                    "Fila {$filaExcel}: no existe proveedor con RUC {$ruc}"
                 );
             }
 
 
-            $cantidad = (float)$cantidad;
-
-            $precio = (float)$precio;
-
-            $totalProducto = (float)$totalProducto;
+            $idProveedor = (int)$prov['id'];
 
 
             /*
             ========================================================
-            CLAVE ÚNICA DE LA COMPRA
+            CLAVE ÚNICA DEL COMPROBANTE
             ========================================================
             */
 
@@ -1834,6 +2003,12 @@ $app->post('/importar-compras', function (
 
                 $compras[$clave] = [
 
+                    'ruc' =>
+                        $ruc,
+
+                    'id_proveedor' =>
+                        $idProveedor,
+
                     'comprobante' =>
                         $comprobante,
 
@@ -1846,22 +2021,31 @@ $app->post('/importar-compras', function (
                     'fecha' =>
                         $fecha,
 
-                    'ruc' =>
-                        $ruc,
-
-                    'proveedor' =>
-                        $proveedor,
-
-                    'serie' =>
+                    'serie_documento' =>
                         $serie,
 
-                    'numero' =>
+                    'nro_documento' =>
                         $numero,
+
+                    'observaciones' =>
+                        [],
 
                     'detalles' =>
                         []
-
                 ];
+            }
+
+
+            /*
+            ========================================================
+            AGREGAR OBSERVACIÓN A CABECERA
+            ========================================================
+            */
+
+            if ($observacion !== '') {
+
+                $compras[$clave]['observaciones'][] =
+                    $observacion;
             }
 
 
@@ -1873,34 +2057,33 @@ $app->post('/importar-compras', function (
 
             $compras[$clave]['detalles'][] = [
 
-                'cantidad' =>
-                    $cantidad,
-
-                'unidad' =>
-                    $unidad,
-
                 'codigo' =>
                     $codigo,
 
                 'descripcion' =>
                     $descripcion,
 
+                'unidad_medida' =>
+                    $unidad,
+
+                'cantidad' =>
+                    $cantidad,
+
                 'precio' =>
                     $precio,
 
-                'total' =>
+                'subtotal' =>
                     $totalProducto,
 
                 'observacion' =>
                     $observacion
-
             ];
         }
 
 
         /*
         ============================================================
-        4. INICIAR TRANSACCIÓN
+        6. TRANSACCIÓN
         ============================================================
         */
 
@@ -1909,102 +2092,177 @@ $app->post('/importar-compras', function (
 
         /*
         ============================================================
-        5. PREPARAR VERIFICACIÓN DE DUPLICADOS
+        7. VERIFICAR DUPLICADOS
         ============================================================
         */
 
         $stmtExiste = $pdo->prepare("
             SELECT id
             FROM compras
-            WHERE ruc = :ruc
-              AND serie = :serie
-              AND numero = :numero
+            WHERE id_proveedor = :id_proveedor
+              AND serie_documento = :serie_documento
+              AND nro_documento = :nro_documento
             LIMIT 1
         ");
 
 
         /*
         ============================================================
-        6. PREPARAR INSERT COMPRA
+        8. INSERTAR CABECERA
         ============================================================
         */
 
         $stmtCompra = $pdo->prepare("
             INSERT INTO compras
             (
-                comprobante,
-                cod_cpe,
-                moneda,
+                id_usuario,
+                serie_documento,
+                nro_documento,
+                id_proveedor,
+                pendientes,
+                igv,
+                monto_igv,
+                valor_neto,
+                descuento,
+                valor_total,
+                monto_pendiente,
+                formaPago,
+                fechaPago,
+                estado,
+                serie_comprobante,
+                nro_comprobante,
+                tipoDoc,
+                observacion,
                 fecha,
-                ruc,
-                proveedor,
-                serie,
-                numero,
-                total
+                fecha_registro
             )
             VALUES
             (
-                :comprobante,
-                :cod_cpe,
-                :moneda,
+                :id_usuario,
+                :serie_documento,
+                :nro_documento,
+                :id_proveedor,
+                :pendientes,
+                :igv,
+                :monto_igv,
+                :valor_neto,
+                :descuento,
+                :valor_total,
+                :monto_pendiente,
+                :formaPago,
+                :fechaPago,
+                :estado,
+                :serie_comprobante,
+                :nro_comprobante,
+                :tipoDoc,
+                :observacion,
                 :fecha,
-                :ruc,
-                :proveedor,
-                :serie,
-                :numero,
-                :total
+                NOW()
             )
         ");
 
 
         /*
         ============================================================
-        7. PREPARAR INSERT DETALLE
+        9. INSERTAR DETALLE
         ============================================================
+
+        id_producto e id_inventario:
+        El Excel solamente trae CODIGO.
+        Por ahora quedan NULL.
         */
 
         $stmtDetalle = $pdo->prepare("
-            INSERT INTO compras_detalle
+            INSERT INTO compra_detalle
             (
-                compra_id,
-                cantidad,
-                unidad,
+                id_compra,
+                id_producto,
+                id_inventario,
                 codigo,
-                descripcion,
+                unidad_medida,
+                cantidad,
+                pendiente,
+                peso,
                 precio,
-                total,
-                observacion
+                descuento,
+                subtotal,
+                fecha_registro
             )
             VALUES
             (
-                :compra_id,
-                :cantidad,
-                :unidad,
+                :id_compra,
+                :id_producto,
+                :id_inventario,
                 :codigo,
-                :descripcion,
+                :unidad_medida,
+                :cantidad,
+                :pendiente,
+                :peso,
                 :precio,
-                :total,
-                :observacion
+                :descuento,
+                :subtotal,
+                NOW()
             )
         ");
 
 
         /*
         ============================================================
-        CONTADORES
+        10. INSERTAR PAGO
+        ============================================================
+
+        Como el Excel no contiene:
+        - tipo de pago
+        - número de operación
+        - cuenta
+        - monto pagado
+
+        se registra como PENDIENTE.
+        */
+
+        $stmtPago = $pdo->prepare("
+            INSERT INTO compra_pagos
+            (
+                id_compra,
+                tipoPago,
+                numero_operacion,
+                cuentaPago,
+                monto,
+                monto_pendiente,
+                estado,
+                usuario,
+                fecha_registro
+            )
+            VALUES
+            (
+                :id_compra,
+                :tipoPago,
+                :numero_operacion,
+                :cuentaPago,
+                :monto,
+                :monto_pendiente,
+                :estado,
+                :usuario,
+                NOW()
+            )
+        ");
+
+
+        /*
+        ============================================================
+        11. CONTADORES
         ============================================================
         */
 
         $comprasInsertadas = 0;
-
         $detallesInsertados = 0;
-
+        $pagosInsertados = 0;
         $duplicadas = 0;
 
 
         /*
         ============================================================
-        8. INSERTAR COMPRAS
+        12. INSERTAR CADA COMPRA
         ============================================================
         */
 
@@ -2013,21 +2271,20 @@ $app->post('/importar-compras', function (
 
             /*
             --------------------------------------------------------
-            VERIFICAR SI YA EXISTE
+            VERIFICAR DUPLICADO
             --------------------------------------------------------
             */
 
             $stmtExiste->execute([
 
-                ':ruc' =>
-                    $compra['ruc'],
+                ':id_proveedor' =>
+                    $compra['id_proveedor'],
 
-                ':serie' =>
-                    $compra['serie'],
+                ':serie_documento' =>
+                    $compra['serie_documento'],
 
-                ':numero' =>
-                    $compra['numero']
-
+                ':nro_documento' =>
+                    $compra['nro_documento']
             ]);
 
 
@@ -2047,7 +2304,7 @@ $app->post('/importar-compras', function (
 
             /*
             --------------------------------------------------------
-            CALCULAR TOTAL DE LA COMPRA
+            CALCULAR TOTAL
             --------------------------------------------------------
             */
 
@@ -2059,7 +2316,59 @@ $app->post('/importar-compras', function (
             ) {
 
                 $totalCompra +=
-                    $detalle['total'];
+                    $detalle['subtotal'];
+            }
+
+
+            $totalCompra = round(
+                $totalCompra,
+                2
+            );
+
+
+            /*
+            --------------------------------------------------------
+            CALCULAR IGV
+            --------------------------------------------------------
+
+            PRECIOCIGV y TOTAL DE PRODUCTO
+            vienen con IGV incluido.
+            */
+
+            $valorNeto = round(
+                $totalCompra / 1.18,
+                2
+            );
+
+
+            $montoIgv = round(
+                $totalCompra - $valorNeto,
+                2
+            );
+
+
+            /*
+            --------------------------------------------------------
+            OBSERVACIÓN CABECERA
+            --------------------------------------------------------
+            */
+
+            $observacionCabecera = '';
+
+            if (
+                count($compra['observaciones']) > 0
+            ) {
+
+                $observacionesUnicas =
+                    array_unique(
+                        $compra['observaciones']
+                    );
+
+                $observacionCabecera =
+                    implode(
+                        '; ',
+                        $observacionesUnicas
+                    );
             }
 
 
@@ -2071,33 +2380,68 @@ $app->post('/importar-compras', function (
 
             $stmtCompra->execute([
 
-                ':comprobante' =>
+                ':id_usuario' =>
+                    $idUsuario,
+
+                ':serie_documento' =>
+                    $compra['serie_documento'],
+
+                ':nro_documento' =>
+                    $compra['nro_documento'],
+
+                ':id_proveedor' =>
+                    $compra['id_proveedor'],
+
+                /*
+                 * 1 = tiene monto pendiente
+                 */
+                ':pendientes' =>
+                    1,
+
+                /*
+                 * IGV Perú
+                 */
+                ':igv' =>
+                    18.00,
+
+                ':monto_igv' =>
+                    $montoIgv,
+
+                ':valor_neto' =>
+                    $valorNeto,
+
+                ':descuento' =>
+                    0,
+
+                ':valor_total' =>
+                    $totalCompra,
+
+                ':monto_pendiente' =>
+                    $totalCompra,
+
+                ':formaPago' =>
+                    'PENDIENTE',
+
+                ':fechaPago' =>
+                    null,
+
+                ':estado' =>
+                    'PENDIENTE',
+
+                ':serie_comprobante' =>
+                    $compra['serie_documento'],
+
+                ':nro_comprobante' =>
                     $compra['comprobante'],
 
-                ':cod_cpe' =>
+                ':tipoDoc' =>
                     $compra['cod_cpe'],
 
-                ':moneda' =>
-                    $compra['moneda'],
+                ':observacion' =>
+                    $observacionCabecera,
 
                 ':fecha' =>
-                    $compra['fecha'],
-
-                ':ruc' =>
-                    $compra['ruc'],
-
-                ':proveedor' =>
-                    $compra['proveedor'],
-
-                ':serie' =>
-                    $compra['serie'],
-
-                ':numero' =>
-                    $compra['numero'],
-
-                ':total' =>
-                    $totalCompra
-
+                    $compra['fecha']
             ]);
 
 
@@ -2115,52 +2459,114 @@ $app->post('/importar-compras', function (
 
 
             /*
-            --------------------------------------------------------
+            ========================================================
             INSERTAR DETALLES
-            --------------------------------------------------------
+            ========================================================
             */
 
-            foreach (
-                $compra['detalles']
-                as $detalle
-            ) {
+            foreach ($compra['detalles'] as $detalle)
+            {
+                $prod=$pdo->prepare("SELECT id FROM productos WHERE codigo=:codigo LIMIT 1");
+                $prod->execute([':codigo'=>$detalle['codigo']]);
+                $rows = $prod->fetchAll(PDO::FETCH_ASSOC);
+
+               // print_r($rows[0]['id']);
+
 
                 $stmtDetalle->execute([
 
-                    ':compra_id' =>
+                    ':id_compra' =>
                         $compraId,
 
-                    ':cantidad' =>
-                        $detalle['cantidad'],
+                    /*
+                     * Todavía no se puede determinar desde Excel.
+                     */
+                    ':id_producto' =>
+                    $rows[0]['id'],
 
-                    ':unidad' =>
-                        $detalle['unidad'],
+                    ':id_inventario' =>
+                    $rows[0]['id'],
 
                     ':codigo' =>
                         $detalle['codigo'],
 
-                    ':descripcion' =>
-                        $detalle['descripcion'],
+                    ':unidad_medida' =>
+                        $detalle['unidad_medida'],
+
+                    ':cantidad' =>
+                        $detalle['cantidad'],
+
+                    /*
+                     * No existe columna pendiente
+                     * en el Excel.
+                     */
+                    ':pendiente' =>
+                        0,
+
+                    /*
+                     * No existe peso en Excel.
+                     */
+                    ':peso' =>
+                        0,
 
                     ':precio' =>
                         $detalle['precio'],
 
-                    ':total' =>
-                        $detalle['total'],
+                    ':descuento' =>
+                        0,
 
-                    ':observacion' =>
-                        $detalle['observacion']
-
+                    ':subtotal' =>
+                        $detalle['subtotal']
                 ]);
+
 
                 $detallesInsertados++;
             }
+
+
+            /*
+            ========================================================
+            INSERTAR PAGO PENDIENTE
+            ========================================================
+            */
+
+            $stmtPago->execute([
+
+                ':id_compra' =>
+                    $compraId,
+
+                ':tipoPago' =>
+                    'PENDIENTE',
+
+                ':numero_operacion' =>
+                    '',
+
+                ':cuentaPago' =>
+                    '',
+
+
+
+                ':monto' =>
+                    0,
+
+                ':monto_pendiente' =>
+                    $totalCompra,
+
+                ':estado' =>
+                    'PENDIENTE',
+
+                ':usuario' =>
+                    (string)$idUsuario
+            ]);
+
+
+            $pagosInsertados++;
         }
 
 
         /*
         ============================================================
-        9. CONFIRMAR TRANSACCIÓN
+        13. CONFIRMAR
         ============================================================
         */
 
@@ -2169,13 +2575,14 @@ $app->post('/importar-compras', function (
 
         /*
         ============================================================
-        10. RESPUESTA
+        14. RESPUESTA
         ============================================================
         */
 
         $resultado = [
 
-            'success' => true,
+            'success' =>
+                true,
 
             'message' =>
                 'Importación realizada correctamente',
@@ -2192,9 +2599,11 @@ $app->post('/importar-compras', function (
             'detalles_insertados' =>
                 $detallesInsertados,
 
+            'pagos_insertados' =>
+                $pagosInsertados,
+
             'compras_duplicadas' =>
                 $duplicadas
-
         ];
 
 

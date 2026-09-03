@@ -1584,7 +1584,9 @@ $app->post('/importar-compras', function (
         Lo ideal es obtenerlo desde el usuario autenticado.
         */
 
-        $idUsuario = $data['id_usuario'] ?? 'admin';
+        $idUsuario = $data['usuario'] ?? '3';
+        $sucursal = $data['sucursal'] ?? '';
+
 
         if ($idUsuario === null || $idUsuario === '') {
             throw new Exception(
@@ -1984,14 +1986,14 @@ $app->post('/importar-compras', function (
             CLAVE ÚNICA DEL COMPROBANTE
             ========================================================
             */
-
-            $clave =
+$clave=$comprobante;
+            /*$clave =
                 $ruc .
                 '|' .
                 strtoupper($serie) .
                 '|' .
                 $numero;
-
+*/
 
             /*
             ========================================================
@@ -2119,6 +2121,7 @@ $app->post('/importar-compras', function (
                 serie_documento,
                 nro_documento,
                 id_proveedor,
+                id_sucursal,
                 pendientes,
                 igv,
                 monto_igv,
@@ -2142,6 +2145,7 @@ $app->post('/importar-compras', function (
                 :serie_documento,
                 :nro_documento,
                 :id_proveedor,
+                :id_sucursal,
                 :pendientes,
                 :igv,
                 :monto_igv,
@@ -2391,24 +2395,25 @@ $app->post('/importar-compras', function (
 
                 ':id_proveedor' =>
                     $compra['id_proveedor'],
-
+                ':id_sucursal' =>
+                    $sucursal,
                 /*
                  * 1 = tiene monto pendiente
                  */
                 ':pendientes' =>
-                    1,
+                    0,
 
                 /*
                  * IGV Perú
                  */
                 ':igv' =>
-                    18.00,
+                    0,
 
                 ':monto_igv' =>
-                    $montoIgv,
+                    0,
 
                 ':valor_neto' =>
-                    $valorNeto,
+                    $totalCompra,
 
                 ':descuento' =>
                     0,
@@ -2417,16 +2422,16 @@ $app->post('/importar-compras', function (
                     $totalCompra,
 
                 ':monto_pendiente' =>
-                    $totalCompra,
+                    0,
 
                 ':formaPago' =>
-                    'PENDIENTE',
+                    null,
 
                 ':fechaPago' =>
                     null,
 
                 ':estado' =>
-                    'PENDIENTE',
+                    '1',
 
                 ':serie_comprobante' =>
                     $compra['serie_documento'],
@@ -2435,7 +2440,7 @@ $app->post('/importar-compras', function (
                     $compra['comprobante'],
 
                 ':tipoDoc' =>
-                    $compra['cod_cpe'],
+                    'Factura',
 
                 ':observacion' =>
                     $observacionCabecera,
@@ -2536,24 +2541,24 @@ $app->post('/importar-compras', function (
                     $compraId,
 
                 ':tipoPago' =>
-                    'PENDIENTE',
+                    '1',
 
                 ':numero_operacion' =>
                     '',
 
                 ':cuentaPago' =>
-                    '',
+                    '1',
 
 
 
                 ':monto' =>
-                    0,
+                $totalCompra,
 
                 ':monto_pendiente' =>
-                    $totalCompra,
+                    0,
 
                 ':estado' =>
-                    'PENDIENTE',
+                    null,
 
                 ':usuario' =>
                     (string)$idUsuario

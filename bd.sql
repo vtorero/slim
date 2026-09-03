@@ -159,7 +159,8 @@ VALUES
 ALTER TABLE tipo_documento
 ADD COLUMN tipo ENUM('VENTA','COMPRA','AJUSTE','TESORERIA') NOT NULL DEFAULT 'VENTA';
 
-
+ALTER TABLE tipo_documento
+MODIFY correlativo INT NOT NULL DEFAULT 0;
 
 
 UPDATE tipo_documento SET tipo='VENTA' WHERE codigo IN ('00','01','03');

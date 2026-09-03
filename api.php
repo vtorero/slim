@@ -5953,4 +5953,152 @@ $app->get('/tipo-documento', function ($request, $response) use ($pdo) {
     return $response->withHeader('Content-Type', 'application/json');
 });
 
+/*document controller*/
+
+$app->post('/siguienteNumero', function (Request $request, Response $response) use ($pdo)
+     {
+
+        $data = json_decode(
+            $request->getBody()->getContents(),
+            true
+        );
+
+        $codigo = $data['codigo'] ?? null;
+
+        if (!$codigo) {
+
+            $response->getBody()->write(json_encode([
+                'success' => false,
+                'message' => 'Debe indicar el código del documento'
+            ]));
+
+            return $response
+                ->withHeader('Content-Type', 'application/json')
+                ->withStatus(400);
+        }
+
+        try {
+
+            $pdo->beginTransaction();
+
+            /*
+             * FOR UPDATE bloquea el registro.
+             */
+            $sql = "
+                SELECT
+                    codigo,
+                    nombre,
+                    serie,
+                    correlativo,
+                    tipo,
+                    afecta_stock,
+                    afecta_caja
+                FROM tipo_documento
+                WHERE codigo = :codigo
+                  AND activo = 1
+                FOR UPDATE
+            ";
+
+            $stmt = $pdo->prepare($sql);
+
+            $stmt->execute([
+                ':codigo' => $codigo
+            ]);
+
+            $documento = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            if (!$documento) {
+
+                $pdo->rollBack();
+
+                $response->getBody()->write(json_encode([
+                    'success' => false,
+                    'message' => 'Tipo de documento no encontrado o inactivo'
+                ]));
+
+                return $response
+                    ->withHeader('Content-Type', 'application/json')
+                    ->withStatus(404);
+            }
+
+            /*
+             * El correlativo actual es el número
+             * que vamos a entregar.
+             */
+            $correlativo = (int)$documento['correlativo'];
+
+            /*
+             * Incrementamos para el próximo documento.
+             */
+            $nuevoCorrelativo = $correlativo + 1;
+
+            $sqlUpdate = "
+                UPDATE tipo_documento
+                SET correlativo = :correlativo
+                WHERE codigo = :codigo
+            ";
+
+            $stmtUpdate = $pdo->prepare($sqlUpdate);
+
+            $stmtUpdate->execute([
+                ':correlativo' => $nuevoCorrelativo,
+                ':codigo' => $documento['codigo']
+            ]);
+
+            /*
+             * Formato:
+             *
+             * F001-00000001
+             * F001-00000002
+             */
+            $numero = $documento['serie']
+                . '-'
+                . str_pad(
+                    $correlativo,
+                    8,
+                    '0',
+                    STR_PAD_LEFT
+                );
+
+            $pdo->commit();
+
+            $resultado = [
+                'success' => true,
+                'codigo' => $documento['codigo'],
+                'nombre' => $documento['nombre'],
+                'serie' => $documento['serie'],
+                'correlativo' => $correlativo,
+                'numero' => $numero,
+                'tipo' => $documento['tipo'],
+                'afecta_stock' => (int)$documento['afecta_stock'],
+                'afecta_caja' => (int)$documento['afecta_caja']
+            ];
+
+            $response->getBody()->write(
+                json_encode($resultado)
+            );
+
+            return $response
+                ->withHeader('Content-Type', 'application/json');
+
+        } catch (\Throwable $e) {
+
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+
+            $response->getBody()->write(json_encode([
+                'success' => false,
+                'message' => 'Error al generar número de documento',
+                'error' => $e->getMessage()
+            ]));
+
+            return $response
+                ->withHeader('Content-Type', 'application/json')
+                ->withStatus(500);
+        }
+    });
+
+
+
 $app->run();

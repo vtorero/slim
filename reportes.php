@@ -2525,6 +2525,38 @@ $clave=$comprobante;
                 ]);
 
 
+
+
+                // inventario
+                $stmtInv = $pdo->prepare("
+                UPDATE inventario
+                SET cantidad = cantidad + (? - ?),
+                    fecha_actualizacion = NOW()
+                WHERE producto_id = ? AND id_almacen = ?
+                ");
+                $stmtInv->execute([
+                $detalle['cantidad'],
+                0,
+                $rows[0]['id'],
+                $sucursal
+                ]);
+
+// movimiento
+$stmtMov = $pdo->prepare("CALL p_registrar_movimiento(?,?,?,?,?,?,?,?)");
+$stmtMov->execute([
+$rows[0]['id'],
+ $compraId,
+ 'Ingreso',
+ $detalle['cantidad'],
+ $detalle['precio'],
+ $idUsuario,
+ $sucursal,
+ 'Compra nro:'.$compraId
+]);
+$stmtMov->closeCursor();
+
+
+
                 $detallesInsertados++;
             }
 

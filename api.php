@@ -3422,7 +3422,9 @@ $app->post('/nota-credito-compra', function (
 
     $j = json_decode($request->getBody()->getContents(), true);
 
+
     $data    = json_decode($j['json']);
+    $correlativo = $j['correlativo'];
     //print_r(json_encode($data));
     //die();
     $detalle = $data->detalleVenta;
@@ -3442,7 +3444,7 @@ $app->post('/nota-credito-compra', function (
         */
 
         $stmt = $pdo->prepare("CALL p_nota_credito_compra(
-            ?,?,?,?,?,?,?,?,?)");
+            ?,?,?,?,?,?,?,?,?,?)");
 
         $stmt->execute([
             $data->id,
@@ -3452,6 +3454,7 @@ $app->post('/nota-credito-compra', function (
             0,
             $fecha,
             $data->tipoDoc,
+            $correlativo,
             $data->observacion,
             $data->nombre
         ]);
@@ -3655,7 +3658,7 @@ $app->post('/nota-credito-compra', function (
 
             "STATUS"=>true,
 
-            "messaje"=>"Nota de crédito registrada correctamente Nº ".$idNota
+            "messaje"=> "Nota de crédito registrada correctamente Nº ".$idNota. " y con el documento Nro:".$correlativo
 
         ];
 

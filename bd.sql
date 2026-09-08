@@ -172,3 +172,22 @@ MODIFY correlativo INT NOT NULL DEFAULT 0;
 
 ALTER TABLE tipo_documento
 ADD UNIQUE KEY uk_tipo_documento_codigo (codigo);
+
+
+USE `erp`;
+DROP procedure IF EXISTS `p_venta`;
+
+USE `erp`;
+DROP procedure IF EXISTS `erp`.`p_venta`;
+;
+
+DELIMITER $$
+USE `erp`$$
+CREATE DEFINER=`root`@`localhost` PROCEDURE `p_venta`(IN `p_usuario` VARCHAR(255), IN `p_vendedor` INT(11), IN `p_cliente` INT(11), IN `p_sucursal` INT(11), IN `p_pendiente` BOOLEAN, IN `p_tipo_doc` VARCHAR(50), IN `p_correlativo` VARCHAR(50), IN `p_neto` DECIMAL(10,2), IN `p_total` DECIMAL(10,2), IN `p_mpendiente` DECIMAL(10,2), IN `p_monto_igv` DECIMAL(10,2), IN `p_observacion` TEXT)
+BEGIN
+ INSERT INTO ventas (id_usuario,id_vendedor,id_cliente,id_sucursal,pendientes,tipoDoc,nro_comprobante,fecha,valor_neto,valor_total,monto_pendiente,monto_igv,estado,observacion)
+ VALUES(p_usuario,p_vendedor,p_cliente,p_sucursal, p_pendiente,p_tipo_doc,p_correlativo,now(),p_neto,p_total,p_mpendiente,p_monto_igv,1,p_observacion);
+END$$
+
+DELIMITER ;
+;

@@ -2176,6 +2176,7 @@ $app->post('/venta', function (Request $request, Response $response) use ($pdo) 
 
     $data = json_decode($j['json']);
     $detalle = json_decode($j['detalle']);
+    $correlativo = $j['correlativo'];
 
     $valor_total = 0;
 
@@ -2187,7 +2188,7 @@ $app->post('/venta', function (Request $request, Response $response) use ($pdo) 
         $pdo->beginTransaction();
 
         // 🔹 Ejecutar procedimiento venta
-        $stmt = $pdo->prepare("CALL p_venta(?,?,?,?,?,?,?,?,?,?,?)");
+        $stmt = $pdo->prepare("CALL p_venta(?,?,?,?,?,?,?,?,?,?,?,?)");
         $stmt->execute([
             $data->usuario,
             $data->vendedor,
@@ -2195,6 +2196,7 @@ $app->post('/venta', function (Request $request, Response $response) use ($pdo) 
             $data->sucursal,
             $data->entrega,
             $data->tipoDoc,
+            $correlativo,
             $data->neto,
             $data->total,
             $pendiente,
@@ -2284,7 +2286,7 @@ $app->post('/venta', function (Request $request, Response $response) use ($pdo) 
         $result = [
             "STATUS" => true,
             "numero" => $ultimo_id->ultimo_id,
-            "messaje" => "Venta registrada correctamente con el número: " . $ultimo_id->ultimo_id
+            "messaje" => "Venta registrada correctamente con el número: " . $ultimo_id->ultimo_id ." documento: ". $correlativo
         ];
 
     } catch (Exception $e) {

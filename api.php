@@ -688,6 +688,76 @@ $app->get('/compras', function (Request $request, Response $response) use ($pdo)
         ->withStatus(200);
 });
 
+$app->post('/del_compra', function (Request $request,Response $response) use ($pdo) {
+
+    try {
+
+        // Recibir JSON
+        $body = $request->getBody()->getContents();
+        $j = json_decode($body, true);
+
+        // Tu doble JSON original
+        $data = json_decode($j['json']);
+
+        if (!$data || !isset($data->compra->id)) {
+            throw new Exception('No se recibió el ID de la compra');
+        }
+
+        $idCompra = $data->compra->id;
+
+        // UPDATE usando PDO
+        $sql = "UPDATE compras
+                SET estado = 2
+                WHERE id = :id";
+
+        $stmt = $pdo->prepare($sql);
+
+        $stmt->execute([
+            ':id' => $idCompra
+        ]);
+
+        // Verificar si se actualizó
+        if ($stmt->rowCount() > 0) {
+
+            $result = [
+                "STATUS" => true,
+                "messaje" => "Compra anulada correctamente"
+            ];
+
+        } else {
+
+            $result = [
+                "STATUS" => false,
+                "messaje" => "No se encontró la compra o ya estaba anulada"
+            ];
+        }
+
+    } catch (PDOException $e) {
+
+        $result = [
+            "STATUS" => false,
+            "messaje" => "Error al anular la compra",
+            "error" => $e->getMessage()
+        ];
+
+    } catch (Exception $e) {
+
+        $result = [
+            "STATUS" => false,
+            "messaje" => $e->getMessage()
+        ];
+    }
+
+    $response->getBody()->write(
+        json_encode($result, JSON_UNESCAPED_UNICODE)
+    );
+
+    return $response
+        ->withHeader('Content-Type', 'application/json; charset=utf-8')
+        ->withStatus(200);
+});
+
+
 $app->post('/consulta-compras', function (
     Request $request,
     Response $response

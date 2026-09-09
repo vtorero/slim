@@ -2235,6 +2235,7 @@ $clave=$comprobante;
             WHERE id_proveedor = :id_proveedor
               AND serie_documento = :serie_documento
               AND nro_documento = :nro_documento
+              AND estado=1
             LIMIT 1
         ");
 
@@ -2409,17 +2410,17 @@ $clave=$comprobante;
             VERIFICAR DUPLICADO
             --------------------------------------------------------
             */
-
+            $numero= explode("-", $comprobante);
             $stmtExiste->execute([
 
                 ':id_proveedor' =>
                     $compra['id_proveedor'],
 
                 ':serie_documento' =>
-                    $compra['serie_documento'],
+                    $numero[2],
 
                 ':nro_documento' =>
-                    $compra['nro_documento']
+                    $numero[3]
             ]);
 
 
@@ -2513,16 +2514,20 @@ $clave=$comprobante;
             --------------------------------------------------------
             */
 
+
+
             $stmtCompra->execute([
 
                 ':id_usuario' =>
                     $idUsuario,
 
                 ':serie_documento' =>
-                    $compra['serie_documento'],
+                $numero[2],
+                   // $compra['serie_documento'],
 
                 ':nro_documento' =>
-                    $compra['nro_documento'],
+                $numero[3],
+                 //   $compra['nro_documento'],
 
                 ':id_proveedor' =>
                     $compra['id_proveedor'],
@@ -2659,7 +2664,7 @@ $clave=$comprobante;
 
 
                 // inventario
-                $stmtInv = $pdo->prepare("
+              /*  $stmtInv = $pdo->prepare("
                 UPDATE inventario
                 SET cantidad = cantidad + (? - ?),
                     fecha_actualizacion = NOW()
@@ -2671,9 +2676,9 @@ $clave=$comprobante;
                 $rows[0]['id'],
                 $sucursal
                 ]);
-
+*/
 // movimiento
-$stmtMov = $pdo->prepare("CALL p_registrar_movimiento(?,?,?,?,?,?,?,?)");
+/*$stmtMov = $pdo->prepare("CALL p_registrar_movimiento(?,?,?,?,?,?,?,?)");
 $stmtMov->execute([
 $rows[0]['id'],
  $compraId,
@@ -2685,7 +2690,7 @@ $rows[0]['id'],
  'Compra nro:'.$compraId
 ]);
 $stmtMov->closeCursor();
-
+*/
 
 
                 $detallesInsertados++;

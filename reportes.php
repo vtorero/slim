@@ -888,9 +888,10 @@ $app->post('/exportarclientes', function (Request $request, Response $response) 
 });
 
 
-$app->get('/declaracion/{id}', function (Request $request, Response $response, $args) use ($pdo) {
+$app->get('/declaracion/{id}/{correlativo}', function (Request $request, Response $response, $args) use ($pdo) {
 
     $id = $args['id'];
+    $correlativo = $args['correlativo'];
 
     $sql = "SELECT a.nombre,a.unidad, d.*,c.razon_social as cliente,c.num_documento,
                    v.*,pa.*,'',s.direccion,s.email,
@@ -929,22 +930,29 @@ $app->get('/declaracion/{id}', function (Request $request, Response $response, $
     $pdf->Cell(0,6,'DECLARACION JURADA DE GASTOS',0,1,'L');
     $pdf->Ln(14);
     $pdf->SetFont('Arial','',17);
-    if($prods[0]['local']!="C.J.M"){
-        $pdf->Cell(0,6,'FERRETERIA Y MATERIALES DE CONSTRUCCION LAS',0,1,'L');
-        $pdf->Cell(0,10,'HERMANITAS E.I.R.L.',0,1,'L');
-    }else{
-       // $pdf->Cell(0,6,$prods[0]['local'],0,1,'L');
-    }
+    $pdf->Cell(0,6,'FERRETERIA Y MATERIALES DE CONSTRUCCION',0,1,'L');
+    $pdf->Cell(0,10,'LAS HERMANITAS E.I.R.L.',0,1,'L');
+
     $pdf->SetFont('Arial','',17);
     //$pdf->Cell(0,8,'Whatsap/Telefono: '.$prods[0]['telefono'],0,1,' L');
     //$pdf->Cell(0,8,$prods[0]['email'],0,1,'C');
-    $pdf->Cell(0,8,$prods[0]['direccion'],0,1,'L');
-    $pdf->Cell(0,8,'- Lima - Lima',0,1,'L');
+    //$pdf->Cell(0,8,$prods[0]['direccion'],0,1,'L');
+    //$pdf->Cell(0,8,'- Lima - Lima',0,1,'L');
 
     $pdf->SetFont('Arial','B',16);
+    $pdf->Ln(10);
     $pdf->Cell(0,8,'RUC: 20537929520',0,1,' L');
-    $pdf->Cell(0,8,'TICKET NRO:'.$prods[0]['id_compra'],0,1,'L');
-    $pdf->Cell(0,6,$prods[0]['local'],0,1,'L');
+    $pdf->Ln(10);
+    $pdf->Cell(0,8,'Direccion:',0,1,' L');
+    $pdf->Ln(10);
+    $pdf->Cell(0,8,'LT. 9 MZ E COO LA ESPERANZA',0,1,' L');
+    $pdf->Cell(0,8,'SANTIAGO DE SURCO - LIMA',0,1,' L');
+    $pdf->Ln(20);
+
+
+
+    $pdf->Cell(0,8,'DEC. JUR NRO:'.$correlativo,0,1,'L');
+    //$pdf->Cell(0,6,$prods[0]['local'],0,1,'L');
 
     $pdf->Ln(10);
     $pdf->SetFont('Arial','B',16);
@@ -2555,10 +2563,10 @@ $clave=$comprobante;
                     0,
 
                 ':valor_total' =>
-                    $totalCompra,
+                    0,
 
                 ':monto_pendiente' =>
-                    0,
+                    $totalCompra,
 
                 ':formaPago' =>
                     null,
@@ -2570,10 +2578,10 @@ $clave=$comprobante;
                     '1',
 
                 ':serie_comprobante' =>
-                    $compra['serie_documento'],
+                    $numero[2],
 
                 ':nro_comprobante' =>
-                    $compra['comprobante'],
+                $numero[2].'-'.$numero[3],
 
                 ':tipoDoc' =>
                     'Factura',
@@ -2642,7 +2650,7 @@ $clave=$comprobante;
                      * en el Excel.
                      */
                     ':pendiente' =>
-                        0,
+                    $detalle['cantidad'],
 
                     /*
                      * No existe peso en Excel.
@@ -2723,7 +2731,7 @@ $stmtMov->closeCursor();
                 $totalCompra,
 
                 ':monto_pendiente' =>
-                    0,
+                $totalCompra,
 
                 ':estado' =>
                     null,

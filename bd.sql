@@ -172,6 +172,8 @@ MODIFY correlativo INT NOT NULL DEFAULT 0;
 
 ALTER TABLE tipo_documento
 ADD UNIQUE KEY uk_tipo_documento_codigo (codigo);
+ALTER TABLE `erp`.`tipo_documento`
+CHANGE COLUMN `tipo` `tipo` ENUM('VENTA', 'COMPRA', 'AJUSTE', 'TESORERIA', 'DECLARACION') NOT NULL DEFAULT 'VENTA' ;
 
 
 USE `erp`;

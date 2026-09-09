@@ -3526,7 +3526,7 @@ $app->post('/nota-credito-compra', function (
             0,
             $fecha,
             $data->tipoDoc,
-            $correlativo,
+            $data->nro_documento,
             $data->observacion,
             $data->nombre
         ]);
@@ -3730,7 +3730,7 @@ $app->post('/nota-credito-compra', function (
 
             "STATUS"=>true,
 
-            "messaje"=> "Nota de crédito registrada correctamente Nº ".$idNota. " y con el documento Nro:".$correlativo
+            "messaje"=> "Nota de crédito registrada correctamente Nº ".$idNota
 
         ];
 

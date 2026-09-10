@@ -2022,16 +2022,14 @@ $app->post('/item-producto', function (Request $request, Response $response) use
 
             $data = json_decode($j['json']);
 
+
             $pdo->beginTransaction();
             // Buscar el detalle actual
             $stmt = $pdo->prepare("
              SELECT
-                    id,
-                    cantidad,
-                    precio,
-                    id_producto
-                FROM venta_detalle
-                WHERE id_venta = ?;
+                    id
+               FROM ventas
+                WHERE id = ?;
             ");
 
             $stmt->execute([
@@ -2039,6 +2037,8 @@ $app->post('/item-producto', function (Request $request, Response $response) use
             ]);
 
             $detalle = $stmt->fetch(PDO::FETCH_OBJ);
+
+
 
             if (!$detalle) {
                 throw new Exception("No existe el id de  venta.");
@@ -2217,6 +2217,13 @@ $app->post('/item-producto', function (Request $request, Response $response) use
     */
             $pdo->commit();
 
+            $result = [
+                'STATUS' => 200,
+                'messaje' => 'Producto registrado',
+                'total' => $nuevoTotal,
+                'pendiente'=>$montoPendienteVenta
+            ];
+
         } catch (Exception $e) {
 
             $pdo->rollBack();
@@ -2227,13 +2234,13 @@ $app->post('/item-producto', function (Request $request, Response $response) use
             ];
         }
 
-        $result = [
+       /* $result = [
             'STATUS' => 200,
             'messaje' => 'Producto registrado',
             'total' => $nuevoTotal,
             'pendiente'=>$montoPendienteVenta
         ];
-
+*/
         $response->getBody()->write(json_encode($result));
         return $response->withHeader('Content-Type', 'application/json');
     });
@@ -3439,7 +3446,7 @@ SELECT
     d.id,
     'NOTA CRÉDITO' AS tipo,
     '' AS caja,
-    CONCAT('NC:', d.id_nota_credito) AS numero_operacion,
+    n.nro_comprobante AS numero_operacion,
     -SUM(d.subtotal) AS monto,
     0 as monto_pendiente,
     MAX(d.fecha_registro) AS fecha

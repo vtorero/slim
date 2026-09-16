@@ -21,20 +21,20 @@ use Dompdf\Dompdf;
 use Slim\Factory\AppFactory;
 
 $app = AppFactory::create();
-/*Produccion
 
 
-*/
+
+
 //Local dev
-/*
-$dsn = "mysql:host=lh-cjm.com;dbname=aprendea_erp;port=3306;charset=utf8";
+
+$dsn = "mysql:host=localhost;dbname=aprendea_erp;port=3306;charset=utf8";
 $usuario="aprendea_erp";
 $clave="erp2023*";
-*/
+/*
 $dsn = "mysql:host=localhost;dbname=erp;port=3306;charset=utf8";
 $usuario="root";
 $clave= "";
-
+*/
 try {
     $pdo = new PDO($dsn, $usuario, $clave, [
         PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
@@ -424,9 +424,7 @@ $app->post('/exportar', function (Request $request, Response $response) use ($pd
                 JOIN sub_categorias sc ON p.id_subcategoria = sc.id
                 JOIN sub_sub_categorias fa ON p.id_sub_sub_categoria = fa.id
                 WHERE vp.fecha_registro BETWEEN :ini AND :fin
-
-                ORDER BY fecha_registro DESC";
-
+                ORDER BY `fecha_registro` DESC";
 
 
 
@@ -712,7 +710,8 @@ $app->post('/exportarcaja', function (Request $request, Response $response) use 
                 JOIN usuarios u ON u.id = vp.usuario
                 JOIN cajas c ON c.id = vp.cuentaPago
                 WHERE vp.fecha_registro BETWEEN :ini AND :fin
-
+                UNION ALL
+    SELECT mc.id,fecha_registro,fecha_registro as fecha, '00000000' as num_documento,'' as razon_social,UPPER(mc.tipo) as tipo_movimiento,'admin' as nombre,'No Aplica',(SELECT nombre from cajas where id=mc.cuenta),mc.monto as valor_total,mc.monto , 00 as monto_pendiente,mc.concepto as observacion from movimiento_caja  mc WHERE mc.fecha_registro between :ini AND :fin
                 ORDER BY fecha_registro DESC";
 
         $stmt = $pdo->prepare($sql);

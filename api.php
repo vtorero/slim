@@ -22,7 +22,7 @@ $dsn = "mysql:host=localhost;dbname=erp;port=3306;charset=utf8";
 $usuario="root";
 $clave= "";
 /*
-$dsn = "mysql:host=lh-cjm.com;dbname=aprendea_erp;port=3306;charset=utf8";
+$dsn = "mysql:host=localhost;dbname=aprendea_erp;port=3306;charset=utf8";
 $usuario="aprendea_erp";
 $clave="erp2023*";
 */
@@ -3897,6 +3897,211 @@ $app->post('/compra', function (Request $request, Response $response) use ($pdo)
     return $response->withHeader('Content-Type', 'application/json');
 });
 
+
+$app->post('/actualiza-monto-compra', function (
+    $request,
+    $response
+) use ($pdo) {
+
+    try {
+
+        // Recibir JSON
+        //$body = $request->getParsedBody();
+        //$body = $request->getBody()->getContents();
+        $body = json_decode($request->getBody()->getContents(), true);
+
+        /*
+         * Si Angular envía:
+         *
+         * {
+         *    json: JSON.stringify(datos)
+         * }
+         *
+         * mantenemos compatibilidad con tu código actual.
+         */
+        $data = json_decode($body['json'] ?? '');
+
+        if (!$data) {
+            throw new Exception('Datos JSON inválidos');
+        }
+
+        // Validar datos necesarios
+        $idCompra    = $data->id_venta ?? null;
+        $tipoPago    = $data->tipo_pago ?? null;
+        $numero      = $data->numero ?? null;
+        $cuentaPago  = $data->cuenta_pago ?? null;
+        $monto       = $data->monto ?? null;
+        $usuario     = $data->usuario ?? null;
+
+        if (!$idCompra || $monto === null) {
+            throw new Exception('Datos incompletos para registrar el pago');
+        }
+
+        if ($monto <= 0) {
+            throw new Exception('El monto debe ser mayor que cero');
+        }
+
+        // ==========================================
+        // Obtener último saldo pendiente
+        // ==========================================
+
+        $sql = "SELECT monto_pendiente
+                FROM compra_pagos
+                WHERE id_compra = :id_compra
+                ORDER BY id DESC
+                LIMIT 1";
+
+        $stmt = $pdo->prepare($sql);
+
+        $stmt->execute([
+            ':id_compra' => $idCompra
+        ]);
+
+        $pagoAnterior = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$pagoAnterior) {
+
+            $result = [
+                "STATUS" => false,
+                "messaje" => "No existe información de pagos para esta compra"
+            ];
+
+        } else {
+
+            $montoPendiente = (float)$pagoAnterior['monto_pendiente'];
+            $montoPago      = (float)$monto;
+
+            // ==========================================
+            // Validar saldo
+            // ==========================================
+
+            if ($montoPendiente <= 0) {
+
+                $result = [
+                    "STATUS" => false,
+                    "messaje" => "Ya no existe monto pendiente"
+                ];
+
+            } elseif ($montoPago > $montoPendiente) {
+
+                $result = [
+                    "STATUS" => false,
+                    "messaje" => "La cantidad es mayor al saldo pendiente"
+                ];
+
+            } else {
+
+                $nuevoPendiente = $montoPendiente - $montoPago;
+
+                // ==========================================
+                // Transacción
+                // ==========================================
+
+                $pdo->beginTransaction();
+
+                // Insertar nuevo pago
+                $sqlInsert = "INSERT INTO compra_pagos
+                    (
+                        id_compra,
+                        tipoPago,
+                        numero_operacion,
+                        cuentaPago,
+                        monto,
+                        monto_pendiente,
+                        estado,
+                        usuario
+                    )
+                    VALUES
+                    (
+                        :id_compra,
+                        :tipo_pago,
+                        :numero_operacion,
+                        :cuenta_pago,
+                        :monto,
+                        :monto_pendiente,
+                        1,
+                        :usuario
+                    )";
+
+                $stmtInsert = $pdo->prepare($sqlInsert);
+
+                $stmtInsert->execute([
+                    ':id_compra'        => $idCompra,
+                    ':tipo_pago'        => $tipoPago,
+                    ':numero_operacion' => $numero,
+                    ':cuenta_pago'      => $cuentaPago,
+                    ':monto'            => $montoPago,
+                    ':monto_pendiente'  => $nuevoPendiente,
+                    ':usuario'          => $usuario
+                ]);
+
+                // Actualizar saldo de la compra
+                $sqlUpdate = "UPDATE compras
+                              SET monto_pendiente = :monto_pendiente
+                              WHERE id = :id";
+
+                $stmtUpdate = $pdo->prepare($sqlUpdate);
+
+                $stmtUpdate->execute([
+                    ':monto_pendiente' => $nuevoPendiente,
+                    ':id'              => $idCompra
+                ]);
+
+                // Confirmar transacción
+                $pdo->commit();
+
+                $result = [
+                    "STATUS" => true,
+                    "messaje" => "Monto pendiente actualizado correctamente",
+                    "monto_anterior" => $montoPendiente,
+                    "monto_pagado" => $montoPago,
+                    "monto_pendiente" => $nuevoPendiente
+                ];
+            }
+        }
+
+    } catch (PDOException $e) {
+
+        // Si hubo una transacción abierta, revertir
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+
+        $result = [
+            "STATUS" => false,
+            "messaje" => "Error de base de datos:".$e->getMessage(),
+            "error" => $e->getMessage()
+        ];
+
+    } catch (Exception $e) {
+
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+
+        $result = [
+            "STATUS" => false,
+            "messaje" => $e->getMessage()
+        ];
+    }
+
+    // ==========================================
+    // Respuesta JSON
+    // ==========================================
+
+    $response->getBody()->write(
+        json_encode($result, JSON_UNESCAPED_UNICODE)
+    );
+
+    return $response
+        ->withHeader(
+            'Content-Type',
+            'application/json; charset=utf-8'
+        )
+        ->withStatus(200);
+});
+
+
 $app->post('/actualiza-monto', function (
     Request $request,
     Response $response
@@ -6008,14 +6213,14 @@ $app->get('/tipo-documento', function ($request, $response) use ($pdo) {
 
     $sql = "
         SELECT *
-        FROM erp.tipo_documento
+        FROM tipo_documento
     ";
     $stmt = $pdo->prepare($sql);
     $stmt->execute();
 }else{
     $sql = "
         SELECT *
-        FROM erp.tipo_documento
+        FROM tipo_documento
         WHERE tipo = :tipo
     ";
     $stmt = $pdo->prepare($sql);

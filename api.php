@@ -18,13 +18,13 @@ $app = AppFactory::create();
 
 //Local dev
 
-$dsn = "mysql:host=localhost;dbname=erp;port=3306;charset=utf8";
-$usuario="root";
-$clave= "";
-/*
 $dsn = "mysql:host=localhost;dbname=aprendea_erp;port=3306;charset=utf8";
 $usuario="aprendea_erp";
 $clave="erp2023*";
+/*
+$dsn = "mysql:host=localhost;dbname=aprendea_erp;port=3306;charset=utf8";
+$usuario="root";
+$clave= "";
 */
 try {
     $pdo = new PDO($dsn, $usuario, $clave, [
@@ -44,35 +44,16 @@ $app->addErrorMiddleware(true, true, true);
 
 $app->get('/ventas', function (Request $request, Response $response) use ($pdo) {
 
-    $sql = "SELECT
-                v.id,
-                c.num_documento,
-                c.telefono,
-                c.direccion,
-                c.id as id_cliente,
-                c.nombre as cliente,
-                u.nombre,
-                v.tipoDoc,
-                v.id_vendedor,
-                v.id_sucursal,
-                DATE_FORMAT(v.fecha_registro, '%d-%m-%Y') as fechaPago,
-                IF(v.pendientes=0,'No','Si') as pendientes,
-                v.igv,
-                v.monto_igv,
-                v.descuento,
-                v.valor_neto,
-                v.valor_total,
-                v.monto_pendiente,
-                CASE
-                    WHEN v.estado ='1' THEN 'Registrado'
-                    WHEN v.estado = '2' THEN 'Anulado'
-                END as estado,
-                v.observacion
-            FROM ventas v
-            INNER JOIN clientes c ON v.id_cliente = c.id AND v.estado = 1
-            INNER JOIN usuarios u ON v.id_usuario = u.id
-            WHERE DATE_FORMAT(v.fecha_registro, '%d-%m-%Y') = DATE_FORMAT(NOW(), '%d-%m-%Y')
-            ORDER BY v.id DESC";
+    $sql = "SELECT v.id,c.num_documento,c.telefono,c.direccion,c.id AS id_cliente,c.nombre AS cliente,u.nombre,
+    v.tipoDoc,v.id_vendedor,v.id_sucursal,DATE_FORMAT(v.fecha_registro, '%d-%m-%Y') AS fechaPago,
+    CASE WHEN COALESCE(d.total_pendiente, 0) <= 0 THEN 'NO' ELSE 'SI' END AS pendientes,
+    v.igv,v.monto_igv,v.descuento,v.valor_neto,v.valor_total,v.monto_pendiente, CASE
+        WHEN v.estado = 1 THEN 'Registrado'
+        WHEN v.estado = 2 THEN 'Anulado'
+    END AS estado, v.observacion FROM ventas v INNER JOIN clientes c ON c.id = v.id_cliente
+INNER JOIN usuarios u ON u.id = v.id_usuario
+LEFT JOIN (SELECT id_venta, SUM(pendiente) AS total_pendiente FROM venta_detalle GROUP BY id_venta) d
+    ON d.id_venta = v.id WHERE v.estado = 1 AND DATE_FORMAT(v.fecha_registro, '%d-%m-%Y') = DATE_FORMAT(NOW(), '%d-%m-%Y') ORDER BY v.id DESC";
 
     $stmt = $pdo->prepare($sql);
     $stmt->execute();
@@ -112,35 +93,16 @@ $app->post('/consulta-ventas', function (Request $request, Response $response) u
     $fin = $ano2 . '-' . $fmes2 . '-' . $dia2;
 
     // 🔐 QUERY SEGURA CON PDO
-    $sql = "SELECT
-                v.id,
-                v.estado,
-                c.num_documento,
-                c.telefono,
-                c.direccion,
-                c.id as id_cliente,
-                c.nombre as cliente,
-                u.nombre,
-                v.tipoDoc,
-                v.id_vendedor,
-                v.id_sucursal,
-                DATE_FORMAT(v.fecha_registro, '%d-%m-%Y') as fechaPago,
-                IF(v.pendientes=0,'No','Si') as pendientes,
-                v.igv,
-                v.monto_igv,
-                v.descuento,
-                v.valor_neto,
-                v.valor_total,
-                v.monto_pendiente,
-                CASE
-                    WHEN v.estado ='1' THEN 'Registrado'
-                    WHEN v.estado = '2' THEN 'Anulado'
-                END as estado,
-                v.observacion
-            FROM ventas v
-            INNER JOIN clientes c ON v.id_cliente = c.id
-            INNER JOIN usuarios u ON v.id_usuario = u.id
-            WHERE v.fecha_registro BETWEEN :ini AND :fin
+    $sql = "SELECT v.id,c.num_documento,c.telefono,c.direccion,c.id AS id_cliente,c.nombre AS cliente,u.nombre,
+    v.tipoDoc,v.id_vendedor,v.id_sucursal,DATE_FORMAT(v.fecha_registro, '%d-%m-%Y') AS fechaPago,
+    CASE WHEN COALESCE(d.total_pendiente, 0) <= 0 THEN 'NO' ELSE 'SI' END AS pendientes,
+    v.igv,v.monto_igv,v.descuento,v.valor_neto,v.valor_total,v.monto_pendiente, CASE
+        WHEN v.estado = 1 THEN 'Registrado'
+        WHEN v.estado = 2 THEN 'Anulado'
+    END AS estado, v.observacion FROM ventas v INNER JOIN clientes c ON c.id = v.id_cliente
+INNER JOIN usuarios u ON u.id = v.id_usuario
+LEFT JOIN (SELECT id_venta, SUM(pendiente) AS total_pendiente FROM venta_detalle GROUP BY id_venta) d
+    ON d.id_venta = v.id WHERE v.fecha_registro BETWEEN :ini AND :fin
               AND v.estado = :estado
             ORDER BY v.id DESC";
 
@@ -653,7 +615,8 @@ $app->get('/compras', function (Request $request, Response $response) use ($pdo)
                 c.num_documento,
                 c.razon_social AS cliente,
                 u.nombre,
-                v.tipoDoc,
+                td.codigo as idTipoDoc,
+                td.nombre as tipoDoc,
                 v.serie_documento,
                 v.nro_documento,
                 v.id_sucursal,
@@ -673,7 +636,9 @@ $app->get('/compras', function (Request $request, Response $response) use ($pdo)
                 v.observacion
             FROM compras v
             INNER JOIN proveedores c ON v.id_proveedor = c.id
-            INNER JOIN usuarios u ON v.id_usuario = u.id AND v.estado = 1
+            INNER JOIN usuarios u ON v.id_usuario = u.id
+            INNER JOIN tipo_documento td ON v.idTipoDoc=td.codigo
+            WHERE v.estado = 1
             ORDER BY v.id DESC";
 
     $stmt = $pdo->prepare($sql);
@@ -5131,6 +5096,94 @@ $app->post('/cliente', function (Request $request, Response $response) use ($pdo
     return $response->withHeader('Content-Type', 'application/json');
 });
 
+/*restaurar venta*/
+
+
+$app->post('/restaurarventa', function (Request $request, Response $response) use ($pdo) {
+
+    $body = $request->getBody()->getContents();
+    $j = json_decode($body, true);
+    $data = json_decode($j['json'], true);
+
+    try {
+
+        $id = $data['datos']['id'];
+        $estado = $data['datos']['estado'];
+        $id_sucursal = $data['datos']['id_sucursal'];
+
+        if ($estado != 'Registrado') {
+
+            // 🔥 1. Restaurar venta
+            $stmt = $pdo->prepare("UPDATE ventas SET estado = 1 WHERE id = :id");
+            $stmt->execute([':id' => $id]);
+
+            // 🔥 2. Obtener detalle
+            $stmt = $pdo->prepare("SELECT * FROM venta_detalle WHERE id_venta = :id");
+            $stmt->execute([':id' => $id]);
+
+            $prods = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+            foreach ($prods as $fila) {
+
+                // 🔥 3. Movimiento artículos
+                $stmt = $pdo->prepare("
+                    INSERT INTO movimiento_articulos
+                    (codigo_prod, id_venta, tipo_movimiento, id_almacen, cantidad_ingreso, precio, comentario, id_sucursal, usuario)
+                    VALUES (:codigo_prod, :id_venta, 'Ingreso', :id_almacen, :cantidad, :precio, 'Venta anulada', :id_sucursal, 'admin')
+                ");
+
+                $stmt->execute([
+                    ':codigo_prod' => $fila['id_producto'],
+                    ':id_venta' => $fila['id_venta'],
+                    ':id_almacen' => $fila['id_inventario'],
+                    ':cantidad' => ($fila['cantidad'] + $fila['pendiente']),
+                    ':precio' => $fila['precio'],
+                    ':id_sucursal' => $id_sucursal
+                ]);
+
+                // 🔥 4. Actualizar inventario
+                $stmt = $pdo->prepare("
+                    UPDATE inventario
+                    SET cantidad = cantidad - :cantidad, fecha_actualizacion = NOW()
+                    WHERE producto_id = :producto_id AND id_almacen = :almacen
+                ");
+
+                $stmt->execute([
+                    ':cantidad' => $fila['cantidad'],
+                    ':producto_id' => $fila['id_producto'],
+                    ':almacen' => $id_sucursal
+                ]);
+            }
+
+            $result = [
+                "STATUS" => true,
+                "messaje" => "Venta nro $id fue Restaurada correctamente"
+            ];
+
+        } else {
+
+            $result = [
+                "STATUS" => true,
+                "messaje" => "La venta $id ya está Registrada"
+            ];
+        }
+
+    } catch (Exception $e) {
+
+        $result = [
+            "STATUS" => false,
+            "message" => $e->getMessage()
+        ];
+    }
+
+    $response->getBody()->write(json_encode($result));
+
+    return $response->withHeader('Content-Type', 'application/json');
+});
+
+
+
+/*anular venta*/
 $app->post('/anular', function (Request $request, Response $response) use ($pdo) {
 
     $body = $request->getBody()->getContents();
@@ -5344,7 +5397,8 @@ $app->post('/actualizar-precios', function ($request, $response) use ($pdo) {
     $data = json_decode($request->getBody()->getContents());
 
     $sql = "UPDATE productos
-            SET precio = :precio
+            SET precio = :precio,
+            precio_compra=:precio_compra
             WHERE codigo = :codigo";
 
     $stmt = $pdo->prepare($sql);
@@ -5353,6 +5407,7 @@ $app->post('/actualizar-precios', function ($request, $response) use ($pdo) {
 
         $stmt->execute([
             ':precio' => $producto->PRECIO,
+            ':precio_compra'=>$producto->PRECIO_COMPRA,
             ':codigo' => $producto->CODIGO
         ]);
     }

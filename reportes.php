@@ -31,7 +31,7 @@ $dsn = "mysql:host=localhost;dbname=aprendea_erp;port=3306;charset=utf8";
 $usuario="aprendea_erp";
 $clave="erp2023*";
 /*
-$dsn = "mysql:host=localhost;dbname=erp;port=3306;charset=utf8";
+$dsn = "mysql:host=localhost;dbname=aprendea_erp;port=3306;charset=utf8";
 $usuario="root";
 $clave= "";
 */
@@ -1935,7 +1935,7 @@ $app->post('/importar-compras', function (
 
 
             $ruc = trim(
-                (string)($fila['RUC'] ?? '')
+                (string)($fila['RUCEMISOR'] ?? '')
             );
 
 
@@ -2124,7 +2124,8 @@ $app->post('/importar-compras', function (
             CLAVE ÚNICA DEL COMPROBANTE
             ========================================================
             */
-$clave=$comprobante;
+//$clave=$comprobante;
+$clave = $ruc . '|' . $comprobante;
             /*$clave =
                 $ruc .
                 '|' .
@@ -2252,57 +2253,58 @@ $clave=$comprobante;
         8. INSERTAR CABECERA
         ============================================================
         */
-
         $stmtCompra = $pdo->prepare("
-            INSERT INTO compras
-            (
-                id_usuario,
-                serie_documento,
-                nro_documento,
-                id_proveedor,
-                id_sucursal,
-                pendientes,
-                igv,
-                monto_igv,
-                valor_neto,
-                descuento,
-                valor_total,
-                monto_pendiente,
-                formaPago,
-                fechaPago,
-                estado,
-                serie_comprobante,
-                nro_comprobante,
-                tipoDoc,
-                observacion,
-                fecha,
-                fecha_registro
-            )
-            VALUES
-            (
-                :id_usuario,
-                :serie_documento,
-                :nro_documento,
-                :id_proveedor,
-                :id_sucursal,
-                :pendientes,
-                :igv,
-                :monto_igv,
-                :valor_neto,
-                :descuento,
-                :valor_total,
-                :monto_pendiente,
-                :formaPago,
-                :fechaPago,
-                :estado,
-                :serie_comprobante,
-                :nro_comprobante,
-                :tipoDoc,
-                :observacion,
-                :fecha,
-                NOW()
-            )
-        ");
+        INSERT INTO compras
+        (
+            id_usuario,
+            serie_documento,
+            nro_documento,
+            id_proveedor,
+            id_sucursal,
+            pendientes,
+            igv,
+            monto_igv,
+            valor_neto,
+            descuento,
+            valor_total,
+            monto_pendiente,
+            formaPago,
+            fechaPago,
+            estado,
+            serie_comprobante,
+            nro_comprobante,
+            idTipoDoc,
+            tipoDoc,
+            observacion,
+            fecha,
+            fecha_registro
+        )
+        VALUES
+        (
+            :id_usuario,
+            :serie_documento,
+            :nro_documento,
+            :id_proveedor,
+            :id_sucursal,
+            :pendientes,
+            :igv,
+            :monto_igv,
+            :valor_neto,
+            :descuento,
+            :valor_total,
+            :monto_pendiente,
+            :formaPago,
+            :fechaPago,
+            :estado,
+            :serie_comprobante,
+            :nro_comprobante,
+            :idTipoDoc,
+            :tipoDoc,
+            :observacion,
+            :fecha,
+            NOW()
+        )
+    ");
 
 
         /*
@@ -2417,17 +2419,13 @@ $clave=$comprobante;
             VERIFICAR DUPLICADO
             --------------------------------------------------------
             */
-            $numero= explode("-", $comprobante);
+            $numero= explode("-", $compra['comprobante']);
+
             $stmtExiste->execute([
 
-                ':id_proveedor' =>
-                    $compra['id_proveedor'],
-
-                ':serie_documento' =>
-                    $numero[2],
-
-                ':nro_documento' =>
-                    $numero[3]
+                ':id_proveedor' =>$compra['id_proveedor'],
+                ':serie_documento' => $compra['serie_documento'],
+                ':nro_documento' => $compra['nro_documento']
             ]);
 
 
@@ -2529,40 +2527,34 @@ $clave=$comprobante;
                     $idUsuario,
 
                 ':serie_documento' =>
-                $numero[2],
-                   // $compra['serie_documento'],
+                    $compra['serie_documento'],
 
                 ':nro_documento' =>
-                $numero[3],
-                 //   $compra['nro_documento'],
+                    $compra['nro_documento'],
 
                 ':id_proveedor' =>
                     $compra['id_proveedor'],
+
                 ':id_sucursal' =>
                     $sucursal,
-                /*
-                 * 1 = tiene monto pendiente
-                 */
+
                 ':pendientes' =>
                     0,
 
-                /*
-                 * IGV Perú
-                 */
                 ':igv' =>
                     0,
 
                 ':monto_igv' =>
-                    0,
+                    $montoIgv,
 
                 ':valor_neto' =>
-                    $totalCompra,
+                    $valorNeto,
 
                 ':descuento' =>
                     0,
 
                 ':valor_total' =>
-                    0,
+                    $totalCompra,
 
                 ':monto_pendiente' =>
                     $totalCompra,
@@ -2574,14 +2566,14 @@ $clave=$comprobante;
                     null,
 
                 ':estado' =>
-                    '1',
+                    1,
 
                 ':serie_comprobante' =>
-                    $numero[2],
+                    $compra['serie_documento'],
 
                 ':nro_comprobante' =>
-                $numero[2].'-'.$numero[3],
-
+                    $compra['nro_documento'],
+                ':idTipoDoc' =>$compra['cod_cpe'],
                 ':tipoDoc' =>
                     'Factura',
 

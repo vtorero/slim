@@ -26,15 +26,15 @@ $app = AppFactory::create();
 
 
 //Local dev
-
+/*
 $dsn = "mysql:host=localhost;dbname=aprendea_erp;port=3306;charset=utf8";
 $usuario="aprendea_erp";
 $clave="erp2023*";
-/*
+*/
 $dsn = "mysql:host=localhost;dbname=aprendea_erp;port=3306;charset=utf8";
 $usuario="root";
 $clave= "";
-*/
+
 try {
     $pdo = new PDO($dsn, $usuario, $clave, [
         PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
@@ -1700,6 +1700,7 @@ $app->post('/importar-compras', function (
             JSON_THROW_ON_ERROR
         );
 
+
         if (!is_array($data)) {
             throw new Exception(
                 'El cuerpo de la petición no es un JSON válido'
@@ -2571,11 +2572,9 @@ $clave = $ruc . '|' . $comprobante;
                 ':serie_comprobante' =>
                     $compra['serie_documento'],
 
-                ':nro_comprobante' =>
-                    $compra['nro_documento'],
+                ':nro_comprobante' => $compra['nro_documento'],
                 ':idTipoDoc' =>$compra['cod_cpe'],
-                ':tipoDoc' =>
-                    'Factura',
+                ':tipoDoc' => 'Factura',
 
                 ':observacion' =>
                     $observacionCabecera,
@@ -2690,9 +2689,7 @@ $rows[0]['id'],
 ]);
 $stmtMov->closeCursor();
 */
-
-
-                $detallesInsertados++;
+            $detallesInsertados++;
             }
 
 

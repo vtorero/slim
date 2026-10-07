@@ -18,14 +18,15 @@ $app = AppFactory::create();
 
 //Local dev
 
+/*
 $dsn = "mysql:host=localhost;dbname=aprendea_erp;port=3306;charset=utf8";
 $usuario="aprendea_erp";
 $clave="erp2023*";
-/*
+*/
 $dsn = "mysql:host=localhost;dbname=aprendea_erp;port=3306;charset=utf8";
 $usuario="root";
 $clave= "";
-*/
+
 try {
     $pdo = new PDO($dsn, $usuario, $clave, [
         PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
@@ -267,9 +268,9 @@ $app->get('/articulos', function (Request $request, Response $response) use ($pd
                 p.precio_compra,
                 p.imagen
             FROM productos p
-            LEFT JOIN categorias c ON p.id_categoria = c.id
-            LEFT JOIN sub_categorias sc ON p.id_subcategoria = sc.id
-            LEFT JOIN sub_sub_categorias fa ON p.id_sub_sub_categoria = fa.id
+            LEFT JOIN categorias c ON c.id = p.id_categoria
+            LEFT JOIN sub_categorias sc ON  sc.id = p.id_subcategoria
+            LEFT JOIN sub_sub_categorias fa ON fa.id = p.id_sub_sub_categoria
             WHERE p.estado='activo'
             ORDER BY p.id DESC";
 
@@ -5396,6 +5397,8 @@ $app->post('/actualizar-precios', function ($request, $response) use ($pdo) {
 
     $data = json_decode($request->getBody()->getContents());
 
+
+
     $sql = "UPDATE productos
             SET precio = :precio,
             precio_compra=:precio_compra
@@ -5419,6 +5422,8 @@ $app->post('/actualizar-precios', function ($request, $response) use ($pdo) {
     return $response
         ->withHeader('Content-Type', 'application/json');
 });
+
+
 
 $app->get('/articulos/{criterio}', function (Request $request, Response $response, $args) use ($pdo) {
 

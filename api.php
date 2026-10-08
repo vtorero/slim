@@ -17,7 +17,6 @@ use Slim\Factory\AppFactory;
 $app = AppFactory::create();
 
 //Local dev
-
 /*
 $dsn = "mysql:host=localhost;dbname=aprendea_erp;port=3306;charset=utf8";
 $usuario="aprendea_erp";
@@ -827,7 +826,7 @@ $app->post('/consulta-compras', function (
             v.id,
             c.razon_social AS cliente,
             u.nombre,
-            v.tipoDoc,
+            td.nombre tipoDoc,
             v.serie_documento,
             v.nro_documento,
             v.id_sucursal,
@@ -868,6 +867,7 @@ $app->post('/consulta-compras', function (
 
         INNER JOIN usuarios u
             ON v.id_usuario = u.id
+            INNER join tipo_documento td ON v.idTipoDoc=td.codigo
 
         WHERE v.fecha_registro BETWEEN
             :fecha_inicio

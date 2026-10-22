@@ -26,15 +26,15 @@ $app = AppFactory::create();
 
 
 //Local dev
-/*
+
 $dsn = "mysql:host=localhost;dbname=aprendea_erp;port=3306;charset=utf8";
 $usuario="aprendea_erp";
 $clave="erp2023*";
-*/
+/*
 $dsn = "mysql:host=localhost;dbname=aprendea_erp;port=3306;charset=utf8";
 $usuario="root";
 $clave= "";
-
+*/
 try {
     $pdo = new PDO($dsn, $usuario, $clave, [
         PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
@@ -1586,6 +1586,7 @@ $app->post('/compras', function (Request $request, Response $response) use ($pdo
             cd.precio,
             cd.subtotal,
             c.fecha,
+            c.observacion,
             c.fecha_registro,
             u.nombre AS usuario
         FROM compra_detalle cd
@@ -1623,6 +1624,7 @@ $app->post('/compras', function (Request $request, Response $response) use ($pdo
             'Cantidad',
             'U.M',
             'ID',
+            'Observacion',
             'Fecha de registro',
             'Movimiento',
             'Usuario'
@@ -1632,11 +1634,17 @@ $app->post('/compras', function (Request $request, Response $response) use ($pdo
 
         while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
 
+
+
+            $doc = trim((string)$row['num_documento']);
+
+
+
             $lineData = [
                 substr($row['fecha'], 0, 10),
                 $row['tipoDoc'],
                 $row['serie_documento'],
-                $row['num_documento'],
+                $doc = '="' . $doc . '"',
                 $row['nro_documento'],
                 $row['razon_social'],
                 $row['codigo'],
@@ -1645,6 +1653,7 @@ $app->post('/compras', function (Request $request, Response $response) use ($pdo
                 $row['cantidad'],
                 $row['unidad'],
                 $row['id_compra'],
+                $row['observacion'],
                 $row['fecha_registro'],
                 'Salida',
                 $row['usuario']
@@ -1653,6 +1662,7 @@ $app->post('/compras', function (Request $request, Response $response) use ($pdo
             array_walk($lineData,'filterData');
 
             $excelData .= implode("\t", $lineData) . "\n";
+
         }
 
     } else {
@@ -2716,7 +2726,7 @@ $stmtMov->closeCursor();
 
 
                 ':monto' =>
-                $totalCompra,
+                0,
 
                 ':monto_pendiente' =>
                 $totalCompra,

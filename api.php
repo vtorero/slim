@@ -637,7 +637,7 @@ $app->get('/compras', function (Request $request, Response $response) use ($pdo)
             FROM compras v
             INNER JOIN proveedores c ON v.id_proveedor = c.id
             INNER JOIN usuarios u ON v.id_usuario = u.id
-            INNER JOIN tipo_documento td ON v.idTipoDoc=td.codigo
+            LEFT JOIN tipo_documento td ON v.idTipoDoc=td.codigo
             WHERE v.estado = 1
             ORDER BY v.id DESC";
 
@@ -867,9 +867,10 @@ $app->post('/consulta-compras', function (
 
         INNER JOIN usuarios u
             ON v.id_usuario = u.id
-            INNER join tipo_documento td ON v.idTipoDoc=td.codigo
 
-        WHERE v.fecha_registro BETWEEN
+        LEFT join tipo_documento td ON v.idTipoDoc=td.codigo
+
+        WHERE v.fecha BETWEEN
             :fecha_inicio
             AND
             :fecha_fin

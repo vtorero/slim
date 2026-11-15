@@ -707,12 +707,28 @@ $app->post('/exportarcaja', function (Request $request, Response $response) use 
                 JOIN cajas c ON c.id = vp.cuentaPago
                 WHERE vp.fecha_registro BETWEEN :ini AND :fin
                 UNION ALL
-    SELECT mc.id,fecha_registro,fecha_registro as fecha, '00000000' as num_documento,'' as razon_social,UPPER(mc.tipo) as tipo_movimiento,'admin' as nombre,mc.operacion as numero_operacion,(SELECT nombre from cajas where id=mc.cuenta),mc.monto as valor_total,mc.monto , 00 as monto_pendiente,mc.concepto as observacion from movimiento_caja  mc WHERE mc.fecha_registro between :ini AND :fin
-                ORDER BY fecha_registro DESC";
+                SELECT
+                mc.id AS id,
+                mc.fecha_registro,
+                mc.fecha_registro AS fecha,
+                '00000000' AS documento,
+                '' AS cliente,
+                UPPER(mc.tipo) AS movimiento,
+                'admin' AS usuario,
+                '' AS sucursal,
+                (SELECT nombre FROM cajas WHERE id = mc.cuenta) AS cuenta,
+                mc.operacion AS numero_operacion,
+                mc.monto AS monto,
+                0 AS monto_pendiente,
+                mc.concepto AS observacion
+            FROM movimiento_caja mc
+            WHERE mc.fecha_registro BETWEEN
+                :ini AND :fin
+
+            ORDER BY fecha_registro DESC";
 
         $stmt = $pdo->prepare($sql);
-        print_r($stmt);
-        die();
+       
 
 
         $stmt->execute([

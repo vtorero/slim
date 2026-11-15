@@ -22,6 +22,7 @@ $dsn = "mysql:host=localhost;dbname=aprendea_erp;port=3306;charset=utf8";
 $usuario="aprendea_erp";
 $clave="erp2023*";
 */
+
 $dsn = "mysql:host=localhost;dbname=aprendea_erp;port=3306;charset=utf8";
 $usuario="root";
 $clave= "";
@@ -870,7 +871,7 @@ $app->post('/consulta-compras', function (
 
         LEFT join tipo_documento td ON v.idTipoDoc=td.codigo
 
-        WHERE v.fecha BETWEEN
+        WHERE v.fecha_registro BETWEEN
             :fecha_inicio
             AND
             :fecha_fin
@@ -5979,8 +5980,8 @@ $app->post('/guardamovimiento', function (Request $request, Response $response) 
         }else{
         $monto=-$data['monto'];
         }
-        $sql = "INSERT INTO movimiento_caja (cuenta, tipo,concepto,monto,usuario)
-                VALUES (:cuenta,:tipo,:concepto,:monto,:usuario)";
+        $sql = "INSERT INTO movimiento_caja (cuenta, tipo,concepto,operacion,monto,usuario)
+                VALUES (:cuenta,:tipo,:concepto,:operacion,:monto,:usuario)";
 
         $stmt = $pdo->prepare($sql);
 
@@ -5988,6 +5989,7 @@ $app->post('/guardamovimiento', function (Request $request, Response $response) 
             ':cuenta' => $data['cuenta'],
             ':tipo'=> $data['tipo'],
             ':concepto'=> $data['concepto'],
+            ':operacion'=> $data['operacion'],
             ':monto'=> $monto,
             ':usuario'=> $data['usuario']
         ]);
@@ -5995,6 +5997,7 @@ $app->post('/guardamovimiento', function (Request $request, Response $response) 
         if ($proceso) {
             $result = [
                 "STATUS"  => true,
+                "cuenta" =>$data['cuenta'],
                 "messaje" => "Movimiento generado correctamente"
             ];
         } else {
@@ -6024,7 +6027,7 @@ $app->post('/guardamovimiento', function (Request $request, Response $response) 
 $app->get('/movimiento_caja/{id}', function (Request $request, Response $response,$args) use ($pdo) {
 
     $cuenta = $args['id'];
-    $sql = "SELECT id, fecha_registro,tipo,concepto,monto FROM movimiento_caja where cuenta=:cuenta ORDER BY id desc";
+    $sql = "SELECT id,fecha_registro,tipo,concepto,operacion,monto FROM movimiento_caja where cuenta=:cuenta ORDER BY id desc";
     $stmt = $pdo->prepare($sql);
     $stmt->execute([
         ':cuenta'    => $cuenta,

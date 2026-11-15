@@ -8,7 +8,6 @@ if($method == "OPTIONS") {
     die();
 }
 
-
 require (__DIR__ .'/vendor/autoload.php');
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
@@ -23,18 +22,16 @@ use Slim\Factory\AppFactory;
 $app = AppFactory::create();
 
 
-
-
 //Local dev
-
+/*
 $dsn = "mysql:host=localhost;dbname=aprendea_erp;port=3306;charset=utf8";
 $usuario="aprendea_erp";
 $clave="erp2023*";
-/*
+*/
 $dsn = "mysql:host=localhost;dbname=aprendea_erp;port=3306;charset=utf8";
 $usuario="root";
 $clave= "";
-*/
+
 try {
     $pdo = new PDO($dsn, $usuario, $clave, [
         PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
@@ -55,9 +52,7 @@ $app->addRoutingMiddleware();
 $app->addErrorMiddleware(true, true, true);
 
 $app->post('/reporte', function (Request $request, Response $response) use ($pdo) {
-
     $data = json_decode($request->getBody()->getContents(), true);
-
     $arraymeses = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     $arraynros  = ['01','02','03','04','05','06','07','08','09','10','11','12'];
 
@@ -166,16 +161,17 @@ and v.id=vp.id_compra and v.id_proveedor=cl.id and vp.usuario=u.id and v.id=vd.i
     $sql_caja = str_replace(
         ["{$ini}","{$fin}"],
         [$ini,$fin],
-        "SELECT v.id,cl.num_documento,v.fecha,vp.fecha_registro,'Venta' AS tipo_movimiento,u.nombre usuario,cl.nombre as cliente,cl.direccion,cl.telefono, s.nombre sucursal, c.nombre, valor_total,vp.monto, vp.monto_pendiente,v.observacion
+        "SELECT v.id,cl.num_documento,v.fecha,vp.fecha_registro,'Venta' AS tipo_movimiento,u.nombre usuario,cl.nombre as cliente,cl.direccion,cl.telefono, s.nombre sucursal, c.nombre, valor_total,vp.monto, vp.monto_pendiente,v.observacion,
+        '--' as operacion
 FROM venta_pagos vp,ventas v,usuarios u,sucursales s,cajas c ,clientes cl where vp.cuentaPago=c.id and v.id_sucursal=s.id
 and v.id=vp.id_venta and v.id_cliente=cl.id and vp.usuario=u.id and vp.fecha_registro between '{$ini} 00:00:01' and '{$fin} 23:59:59' and vp.monto>=0 and v.estado='1'
 union all
-SELECT v.id,cl.num_documento,v.fecha,vp.fecha_registro,'Compra'as tipo_movimiento,u.nombre usuario ,cl.razon_social as cliente,cl.direccion,cl.telefono, s.nombre sucursal, c.nombre,valor_total,vp.monto, vp.monto_pendiente,v.observacion
+SELECT v.id,cl.num_documento,v.fecha,vp.fecha_registro,'Compra'as tipo_movimiento,u.nombre usuario ,cl.razon_social as cliente,cl.direccion,cl.telefono, s.nombre sucursal, c.nombre,valor_total,vp.monto, vp.monto_pendiente,v.observacion,'--' as operacion
 FROM compra_pagos vp,compras v,usuarios u,sucursales s,cajas c,proveedores cl where  vp.cuentaPago=c.id and v.id_sucursal=s.id
 and v.id=vp.id_compra and v.id_proveedor=cl.id and vp.usuario=u.id and vp.fecha_registro between '{$ini} 00:00:01' and '{$fin} 23:59:59' and vp.monto>=0
 union all
 SELECT mc.id, '00000000' as num_documento,mc.fecha_registro as fecha,mc.fecha_registro,mc.tipo as tipo_movimiento, 'admin' as usuario ,'No Aplica' as cliente,'--' as direccion,
-'--' as telefono,'---' as sucursal,'admin' as nombre,mc.monto as valor_total,mc.monto , 00 as monto_pendiente,mc.concepto as observacion from movimiento_caja  mc WHERE mc.fecha_registro between '{$ini} 00:00:01' and '{$fin} 23:59:59'
+'--' as telefono,'---' as sucursal,'admin' as nombre,mc.monto as valor_total,mc.monto , 00 as monto_pendiente,mc.concepto as observacion, mc.operacion from movimiento_caja  mc WHERE mc.fecha_registro between '{$ini} 00:00:01' and '{$fin} 23:59:59'
 ORDER BY `fecha_registro` DESC"
     );
 
@@ -711,10 +707,12 @@ $app->post('/exportarcaja', function (Request $request, Response $response) use 
                 JOIN cajas c ON c.id = vp.cuentaPago
                 WHERE vp.fecha_registro BETWEEN :ini AND :fin
                 UNION ALL
-    SELECT mc.id,fecha_registro,fecha_registro as fecha, '00000000' as num_documento,'' as razon_social,UPPER(mc.tipo) as tipo_movimiento,'admin' as nombre,'No Aplica',(SELECT nombre from cajas where id=mc.cuenta),mc.monto as valor_total,mc.monto , 00 as monto_pendiente,mc.concepto as observacion from movimiento_caja  mc WHERE mc.fecha_registro between :ini AND :fin
+    SELECT mc.id,fecha_registro,fecha_registro as fecha, '00000000' as num_documento,'' as razon_social,UPPER(mc.tipo) as tipo_movimiento,'admin' as nombre,mc.operacion as numero_operacion,(SELECT nombre from cajas where id=mc.cuenta),mc.monto as valor_total,mc.monto , 00 as monto_pendiente,mc.concepto as observacion from movimiento_caja  mc WHERE mc.fecha_registro between :ini AND :fin
                 ORDER BY fecha_registro DESC";
 
         $stmt = $pdo->prepare($sql);
+        print_r($stmt);
+        die();
 
 
         $stmt->execute([

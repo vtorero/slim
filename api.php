@@ -17,16 +17,16 @@ use Slim\Factory\AppFactory;
 $app = AppFactory::create();
 
 //Local dev
-/*
+
 $dsn = "mysql:host=localhost;dbname=aprendea_erp;port=3306;charset=utf8";
 $usuario="aprendea_erp";
 $clave="erp2023*";
-*/
 
+/*
 $dsn = "mysql:host=localhost;dbname=aprendea_erp;port=3306;charset=utf8";
 $usuario="root";
 $clave= "";
-
+*/
 try {
     $pdo = new PDO($dsn, $usuario, $clave, [
         PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
@@ -3049,22 +3049,28 @@ $app->delete(
 
             $montoPendienteCompra = max(
                 0,
-                $montoPendienteVenta
+                $montoPendienteCompra
             );
 
             //---------------------------------------------------
             // ACTUALIZAR MONTO_PENDIENTE EN VENTAS
             //---------------------------------------------------
 
-            $stmtActualizarVenta = $pdo->prepare("
+            $stmtActualizarCompra = $pdo->prepare("
                 UPDATE compras
-                SET monto_pendiente = ?
+                SET monto_pendiente = ?,
+                valor_total= ?,
+                valor_neto = ?,
+                monto_igv = ?
                 WHERE id = ?
             ");
 
-            $stmtActualizarVenta->execute([
-                $montoPendienteCompra,
-                $idVenta
+            $stmtActualizarCompra->execute([
+                $valorTotal - $totalPagado,
+                $totalPagado,
+                $totalPagado,
+                $totalPagado*0.18,
+                $idCompra
             ]);
 
             //---------------------------------------------------
@@ -3079,7 +3085,7 @@ $app->delete(
                 'id_pago'         => $idPago,
                 'valor_total'     => $valorTotal,
                 'total_pagado'    => round($totalPagado, 2),
-                'monto_pendiente' => $montoPendienteVenta,
+                'monto_pendiente' => $montoPendienteCompra,
                 'messaje'         => 'Pago eliminado y saldos recalculados correctamente.'
             ];
 
@@ -3621,6 +3627,7 @@ $app->get('/pagos-compra/{id}', function (Request $request, Response $response, 
 
     $sql = "SELECT
     p.id,
+    p.id_compra,
     'PAGO' AS tipo,
     c.nombre AS caja,
     p.numero_operacion,
@@ -3636,6 +3643,7 @@ UNION ALL
 
 SELECT
     d.id,
+    d.id_compra,
     'NOTA CRÉDITO' AS tipo,
     '' AS caja,
     n.nro_comprobante AS numero_operacion,
@@ -3696,27 +3704,17 @@ $app->post('/nota-credito-compra', function (
 
     $data    = json_decode($j['json']);
     $correlativo = $j['correlativo'];
-    //print_r(json_encode($data));
-    //die();
     $detalle = $data->detalleVenta;
-
-
     $fecha = substr($data->fecha, 0, 10);
-
-
     try {
-
         $pdo->beginTransaction();
-
         /*
         =======================================
         CABECERA
         =======================================
         */
-
         $stmt = $pdo->prepare("CALL p_nota_credito_compra(
             ?,?,?,?,?,?,?,?,?,?)");
-
         $stmt->execute([
             $data->id,
             $data->id_proveedor,
@@ -3742,9 +3740,7 @@ $app->post('/nota-credito-compra', function (
             SELECT MAX(id) id
             FROM notacreditos
         ")->fetch(PDO::FETCH_OBJ);
-
         $idNota = $nota->id;
-
         /*
         =======================================
         DETALLE
@@ -3801,9 +3797,7 @@ $app->post('/nota-credito-compra', function (
             ]);
 
             $stock = $stmtStock->fetch(PDO::FETCH_OBJ);
-
             $cantidadSalida = $item->pendiente;
-
             if(!$stock){
 
                 throw new Exception(
@@ -3885,6 +3879,16 @@ $app->post('/nota-credito-compra', function (
     ");
 
     $stmt->execute([$totalNota, $idNota]);
+
+
+    /*actualizar total compra*/
+    $stcompra = $pdo->prepare("
+    UPDATE compras
+    SET valor_neto = 0,valor_total = 0,monto_pendiente = 0
+    WHERE id = ?
+");
+
+$stcompra->execute([$data->id]);
 
         /*
         =======================================

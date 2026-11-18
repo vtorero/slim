@@ -17,16 +17,16 @@ use Slim\Factory\AppFactory;
 $app = AppFactory::create();
 
 //Local dev
-
+/*
 $dsn = "mysql:host=localhost;dbname=aprendea_erp;port=3306;charset=utf8";
 $usuario="aprendea_erp";
 $clave="erp2023*";
+*/
 
-/*
 $dsn = "mysql:host=localhost;dbname=aprendea_erp;port=3306;charset=utf8";
 $usuario="root";
 $clave= "";
-*/
+
 try {
     $pdo = new PDO($dsn, $usuario, $clave, [
         PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
@@ -272,7 +272,7 @@ $app->get('/articulos', function (Request $request, Response $response) use ($pd
             LEFT JOIN sub_categorias sc ON  sc.id = p.id_subcategoria
             LEFT JOIN sub_sub_categorias fa ON fa.id = p.id_sub_sub_categoria
             WHERE p.estado='activo'
-            ORDER BY p.id DESC";
+            ORDER BY p.id DESC limit 500";
 
     $stmt = $pdo->prepare($sql);
     $stmt->execute();
@@ -516,7 +516,7 @@ $app->get('/familia/{criterio}', function (Request $request, Response $response,
         ->withStatus(200);
 });
 
-$app->post('/buscaarticulos', function (Request $request, Response $response) use ($pdo) {
+$app->post('/buscaarticulos/{clave}', function (Request $request, Response $response) use ($pdo) {
 
     $body = $request->getBody()->getContents();
     $j = json_decode($body, true);

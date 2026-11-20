@@ -70,6 +70,29 @@ LEFT JOIN (SELECT id_venta, SUM(pendiente) AS total_pendiente FROM venta_detalle
         ->withStatus(200);
 });
 
+
+$app->post('/facturas-proveedor', function (Request $request, Response $response) use ($pdo) {
+    $body = $request->getBody()->getContents();
+    $data = json_decode($body, true);
+
+    $sql = "SELECT id,serie_documento,nro_documento,valor_total from compras where id_proveedor=:proveedor and idTipoDoc='01'";
+    $stmt = $pdo->prepare($sql);
+
+    $stmt->execute([
+        ':proveedor' => $data['proveedor']
+    ]);
+
+    $prods = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $response->getBody()->write(json_encode($prods));
+
+    return $response
+        ->withHeader('Content-Type', 'application/json')
+        ->withStatus(200);
+
+});
+
+
 $app->post('/consulta-ventas', function (Request $request, Response $response) use ($pdo) {
        $body = $request->getBody()->getContents();
     $j = json_decode($body, true);
@@ -3700,9 +3723,9 @@ $app->post('/nota-credito-compra', function (
 ) use ($pdo) {
 
     $j = json_decode($request->getBody()->getContents(), true);
-
-
     $data    = json_decode($j['json']);
+
+    $id_compra = $data->id_compra;
     $correlativo = $j['correlativo'];
     $detalle = $data->detalleVenta;
     $fecha = substr($data->fecha, 0, 10);
@@ -3750,8 +3773,6 @@ $app->post('/nota-credito-compra', function (
         foreach($detalle as $item){
 
 
-             if($item->devuelto >0)   {
-
                 $subtotal = ($item->devuelto * $item->precio);
                 $totalNota += $subtotal;
 
@@ -3768,7 +3789,7 @@ $app->post('/nota-credito-compra', function (
                 $item->id_inventario,
                 $item->codigo,
                 $item->unidad_medida,
-                $item->devuelto,
+                $item->cantidad,
                 $item->pendiente,
                 0,
                 $item->precio
@@ -3869,7 +3890,7 @@ $app->post('/nota-credito-compra', function (
             ]);
 
             $stmtMov->closeCursor();
-        }
+
         }
 
         $stmt = $pdo->prepare("
@@ -3884,13 +3905,20 @@ $app->post('/nota-credito-compra', function (
     /*actualizar total compra*/
     $stcompra = $pdo->prepare("
     UPDATE compras
-    SET valor_neto = 0,valor_total = 0,monto_pendiente = 0
+    SET monto_pendiente = 0
     WHERE id = ?
 ");
 
-$stcompra->execute([$data->id]);
+$stcompra->execute([$id_compra]);
 
-        /*
+$stcomprapago = $pdo->prepare("
+UPDATE compra_pagos
+SET monto_pendiente = 0
+WHERE id_compra = ?
+");
+
+$stcomprapago->execute([$id_compra]);
+/*
         =======================================
         ACTUALIZAR COMPRA
         =======================================

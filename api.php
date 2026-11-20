@@ -3739,11 +3739,11 @@ $app->post('/nota-credito-compra', function (
         $stmt = $pdo->prepare("CALL p_nota_credito_compra(
             ?,?,?,?,?,?,?,?,?,?)");
         $stmt->execute([
-            $data->id,
+            $data->id_compra,
             $data->id_proveedor,
             $data->motivo,
             $data->id_sucursal,
-            0,
+            $data->valor_total,
             $fecha,
             $data->tipoDoc,
             $data->nro_documento,
@@ -3785,7 +3785,7 @@ $app->post('/nota-credito-compra', function (
             $stmtDet->execute([
                 $idNota,
                 $item->id_producto,
-                $data->id,
+                $data->id_compra,
                 $item->id_inventario,
                 $item->codigo,
                 $item->unidad_medida,
@@ -3796,7 +3796,23 @@ $app->post('/nota-credito-compra', function (
 
             ]);
 
+            $stmtPago = $pdo->prepare("
+            CALL p_compra_pago(?,?,?,?,?,?,?)");
+
+            $stmtPago->execute([
+                $data->id_compra,
+                6, // tipo de pago nota credito
+                'NC',
+                1,
+                $item->precio*$item->cantidad,
+                0,
+                'admin'
+            ]);
+
+
+
             $stmtDet->closeCursor();
+            $stmtPago->closeCursor();
 
             /*
             =======================================
